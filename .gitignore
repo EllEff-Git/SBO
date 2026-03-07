@@ -1,0 +1,15 @@
+/build
+/dist
+/OUTBOUND
+Data/*
+WS/build
+WS/dist
+WS/SBO-WS.xcf
+WS/SBO-WS.ico
+WS/SBO-WS.spec
+WS/config.json
+WS/sbo.txt
+todo.txt
+SBO.ico
+SBO.xcf
+SBO.spec

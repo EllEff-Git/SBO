@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Spotify Overlay v0.3.07.0937</title>
+
+<script>
+
+// initialises last track as null on start
+let lastTrackID = null;
+
+// progress bar trackers
+let currentProgress, lastPercentage = 0;
+let duration = 1;
+let lastUpdateTime = Date.now();
+
+// creates a boolean for pause state
+let isPaused = false;
+
+
+// creates global variables (websocket + all the elements)
+let ws, player, cover, titleElement, artistElement, albumElement, bar, timer;
+
+// waits for the HTML to be fully loaded, then loads the rest
+document.addEventListener("DOMContentLoaded", () => {
+    // sets constants from elements 
+    player = document.getElementById("player");
+    cover = document.getElementById("cover");
+    titleElement = document.getElementById("title");
+    artistElement = document.getElementById("artist");
+    albumElement = document.getElementById("album");
+    bar = document.getElementById("bar");
+    timer = document.getElementById("timer");
+
+    // start the animation function
+    progressAnimation();
+
+    // grabs the config.json file
+    fetch("/config.json")
+
+        // loads the config options
+        .then(res => res.json())
+        .then(Config =>{
+
+        // sets all the variables that the elements use based on config.json
+        // player size + opacity
+        document.documentElement.style.setProperty("--playerWidth", Config.playerWidth + "px");
+        document.documentElement.style.setProperty("--playerHeight", Config.playerHeight + "px")
+        document.documentElement.style.setProperty("--playerOpacity", Config.playerOpacity);
+        // title styling
+        document.documentElement.style.setProperty("--titleStyle", Config.titleStyle);
+        document.documentElement.style.setProperty("--titleWeight", Config.titleWeight);
+        document.documentElement.style.setProperty("--titleColor", Config.titleColor);
+        // album, artist, timer styling
+        document.documentElement.style.setProperty("--supportStyles", Config.supportStyles);
+        document.documentElement.style.setProperty("--supportWeights", Config.supportWeights);
+        document.documentElement.style.setProperty("--supportColors", Config.supportColors);
+        // player border style
+        document.documentElement.style.setProperty("--borderStyle", Config.borderStyle);
+        document.documentElement.style.setProperty("--borderColor", Config.borderColor);
+        // progress bar style
+        document.documentElement.style.setProperty("--pbcNorm", Config.progressBarColor);
+        document.documentElement.style.setProperty("--pbcPause", Config.progressBarPaused);
+        
+        // saves the http port as a constant
+        const wsPort = Config.httpPort;
+        ws = new WebSocket(`ws://127.0.0.1:${wsPort}/ws`);
+        
+        // debug/console printing in browser
+        ws.onopen = () => {
+            console.log("WebSocket connected!");
+        };
+        ws.onerror = (err) => {
+            console.error("WebSocket error:", err);
+        };
+        ws.onclose = (evt) => {
+            console.warn("WebSocket closed:", evt);
+        };
+
+        // when it gets a new "message" (package) from python
+        ws.onmessage = (event) => {
+        // opens and parses the data
+        const data = JSON.parse(event.data);
+
+        // creates a "track ID" from the title, artist and album
+        const trackID = data.title + data.artist + data.album;
+
+        // if the last "track ID" doesn't match the current one
+        if(lastTrackID !== trackID){
+            // sets the temp variable to match
+            lastTrackID = trackID;
+
+            // fades in a new song's info
+            player.style.opacity = 0;
+            setTimeout(()=> player.style.opacity = 1, 50);
+
+            // reset progress (bar)
+            currentProgress = data.progress || 0;
+            duration = data.duration || 1;
+        }
+
+        // check for paused state
+        isPaused = data.paused;
+        // adds/removes the paused element type
+        if(isPaused) player.classList.add("paused");
+        else player.classList.remove("paused");
+
+        // grabs the text contents from the data file and turns into elements
+        titleElement.textContent = data.title || "";
+        artistElement.textContent = data.artist || "";
+        albumElement.textContent = data.album || "";
+
+        // grabs the album cover picture
+        if(data.cover) cover.src = data.cover;
+
+        // uses the length-checking function to check the size of the text fields
+        checkTextSize(titleElement);
+        checkTextSize(artistElement);
+        checkTextSize(albumElement);
+
+        // grabs the progress and duration (if neither is undefined)
+        if(data.progress !== undefined && data.duration !== undefined){
+            // checks if the song is paused
+            if (!isPaused) {
+                // only updates the fields if the song *isn't* updated
+                currentProgress = data.progress;
+                duration = data.duration || 1;
+            }
+        }
+
+        // fade in animation on load
+        player.style.transform = "translateY(0px)";
+        player.style.opacity = 1;
+
+        // set last update time
+        lastUpdateTime = Date.now();
+        };
+    });
+});
+
+</script>
+
+<div id="player">
+    <div id="background"></div>
+    <img id="cover" src="">
+    <div id="info">
+        <div class="text-wrapper">
+            <div class="title" id="title"></div>
+        </div>
+        <div class="text-wrapper">
+            <div class="artist" id="artist"></div>
+        </div>
+        <div class="text-wrapper"></div>
+            <div class="album" id="album"></div>
+        <div id="progress-container">
+            <div id="progress"><div id="bar"></div></div>
+            <div id="timer">0:00 / 0:00</div>
+        </div>
+    </div>
+</div>
+
+<style>
+
+/*
+Hello!
+
+If you're here, editing things manually, I hope you enjoy your stay :)
+
+You can replace any/all the "var(--someVariable)" references below if you don't want the config file to touch those
+
+There's a ton of customisation to be done, and I wish the most amazing Spotify covers upon you
+
+glhf <3
+*/
+
+/* base page body */
+body {
+    margin: 5;
+    background: transparent;
+    font-family: "Segoe UI", sans-serif;
+    color: #ffffff;
+}
+
+/* a background element, added to add more blur*/
+#background {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border-radius: 12px;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    /* very important that it has a low z-index: 0 (means it's below everything else) */
+    z-index: 0;
+}
+
+/* the player, aka the full background for all elements */
+#player {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    /* first 3 are color, the last number in background dictates how opaque it is */
+    background: rgba(25, 25, 25, var(--playerOpacity));
+    padding: 12px;
+    border-radius: 12px;
+    /* the border dictates the thickness, color and existence of, well, a border around the player*/
+    border: 2px var(--borderStyle) var(--borderColor);
+    transform: translateY(20px);
+    /* short fade-in animation */
+    transition: opacity 1s;
+    opacity: 0;
+    /* player sizes */
+    width: var(--playerWidth, 420px);
+    height: var(--playerHeight, 90px);
+    z-index: 1;
+}
+
+/* album picture */
+#cover {
+    /* how wide the picture should be */
+    width: auto;
+    max-width: 30%;
+    /* how tall the picture should be */
+    height: auto;
+    max-height: 90%;
+    /* how rounded the corners should be */
+    border-radius: 10px;
+    object-fit: contain;
+    background: #424242;
+    flex-shrink: 0;
+    z-index: 1;
+}
+
+/* main info, all player fields inherit (text, bar, timer) */
+#info {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex: 1;
+    z-index: 1;
+}
+
+/* all text field-wide configs */
+.title, .artist, .album {
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: ellipsis;
+    position: relative;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+/* the name/title field of the song */
+.title {
+    /* the title styling */
+    font-weight: var(--titleWeight);
+    font-style: var(--titleStyle);
+    font-size: 18px;
+    color: var(--titleColor, #ffffff)
+}
+
+/* the artist and album fields */
+.artist, .album {
+    font-weight: var(--supportWeights);
+    font-style: var(--supportStyles);
+    font-size: 14px;
+    color: var(--supportColors, #ffffff)
+}
+
+/* the progress bar + timer container */
+#progress-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-top: 4px;    
+}
+
+/* progress bar (empty) */
+#progress {
+    flex: 1;
+    min-width: 50px;
+    height: 4px;
+    background: #333;
+    margin-top: 6px;
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+}
+
+/* progress bar (filled) */
+#bar {
+    height: 100%;
+    background: var(--pbcNorm, #1ED760);
+    width: 0%;
+    transition: width 0.3s linear;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+}
+
+/* progress bar (paused) */
+#player.paused #bar {
+    background: var(--pbcPause, #FF2C00);
+    opacity: 1;
+}
+
+/* the timer/duration on the right */
+#timer {
+    font-size: 13px;
+    white-space: nowrap;
+    opacity: 0.8;
+    color: var(--supportColors, #ffffff);
+    font-style: var(--supportStyles);
+}
+
+.text-wrapper {
+    position: relative;
+    overflow: hidden;
+    white-space: nowrap;
+    width: 100%;
+}
+
+/* each individual text field's scroll rules */
+.title.scrolling {
+    animation: scrollTitle 20s linear infinite alternate;
+}
+
+.artist.scrolling {
+    animation: scrollArtist 30s linear infinite alternate;
+}
+
+.album.scrolling {
+    animation: scrollAlbum 25s linear infinite alternate;
+}
+
+/* keyframes for title scrolling */
+@keyframes scrollTitle {
+    0% {
+        /* starts at 0% (normal position) */
+        transform: translateX(0%);
+    }
+    15% {
+        /* stays there for 10% of the duration */
+        transform: translateX(0%);
+    }
+    100% {
+        /* moves to 100% of the total width to the left (so the full string can display, but doesn't fully go away */
+        transform: translateX(-100%);
+    }
+}
+
+/* keyframes for artist scrolling */
+@keyframes scrollArtist {
+    0% {
+        /* starts at 0% (normal position) */
+        transform: translateX(0%);
+    }
+    15% {
+        /* stays there for 10% of the duration */
+        transform: translateX(0%);
+    }
+    100% {
+        /* moves to 80% of the total width to the left (so the full string can display, but doesn't fully go away */
+        transform: translateX(-40%);
+    }
+}
+
+/* keyframes for album scrolling */
+@keyframes scrollAlbum {
+    0% {
+        /* starts at 0% (normal position) */
+        transform: translateX(0%);
+    }
+    15% {
+        /* stays there for 10% of the duration */
+        transform: translateX(0%);
+    }
+    100% {
+        /* moves to 60% of the total width to the left (so the full string can display, but doesn't fully go away */
+        transform: translateX(-40%);
+    }
+}
+
+</style>
+</head>
+<body>
+<script>
+
+// check if any fields exceed the player size (whether they should scroll)
+function checkTextSize(element) {
+    // makes variables (constants) from the passed elements
+    const elementWidth = element.scrollWidth;
+    const parentWidth = element.parentElement.offsetWidth;
+
+    // checks the width of the passed element against the "parent element" (the element that stores the passed element)
+    if (elementWidth > parentWidth) {
+        // if the element is wider, checks if the field already is scrolling
+        if (!element.classList.contains("scrolling")){
+            // enables scrolling
+            element.classList.add("scrolling");
+        }
+    } else {
+        // if it's not wider, disables it
+        element.classList.remove("scrolling");
+    }
+}
+
+// seconds to timers
+function timeFormat(sec) {
+    // calculates the minutes by dividing seconds by 60
+    const min = Math.floor(sec / 60);
+    // calculates seconds by doing divmod of seconds/60, then turning into a string and ensuring there's always 2 numbers (02, 13, etc)
+    const secs = Math.floor(sec % 60).toString().padStart(2, "0");
+    // returns the minutes and seconds, formatted, to the calling function
+    return `${min}:${secs}`;
+}
+
+// progress bar animation
+function progressAnimation() {
+    // checks if the progress bar and timer elements are ready
+    if (!bar || !timer) {
+        // requests animation if yes
+        requestAnimationFrame(progressAnimation);
+        return;
+    }
+    // sets the current time
+    const now = Date.now();
+    // calculates how long it's been since last update, turns into seconds
+    const elapsed = (now - lastUpdateTime) / 1000;
+    // sets the last update to current time
+    lastUpdateTime = now;
+
+    // checks if the player is paused (more accurately, if it's not)
+    if (!isPaused) {
+        // adds the passed time to current time (updating where the bar should be)
+        currentProgress += elapsed;
+        // checks if the song has "ended", forces the progress to end of song if so
+        if (currentProgress > duration) currentProgress = duration;
+        // saves the last % the progress was at (so when it pauses it doesn't tilt)
+        lastPercentage = (currentProgress / duration) * 100;
+    }
+
+    // calculates the progress bar percentage based off last percentage saved
+    bar.style.width = Math.min(100, lastPercentage) + "%";
+
+    // timer update (calls timeFormat on both the current time and the duration)
+    timer.textContent = `${timeFormat(currentProgress)} / ${timeFormat(duration)}`;
+
+    // updates the animation for the progress things (bar + timer) based on new data
+    requestAnimationFrame(progressAnimation);
+}
+
+</script>
+</body>
+</html>
