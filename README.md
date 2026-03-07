@@ -15,7 +15,7 @@ Requires a Spotify Premium account to create a Spotify developer app in order to
 </br>
 
 Default appearance at localhost website: </br>
-![Imgur Image](https://imgur.com/6aGvPmw)
+![Imgur Image](https://i.imgur.com/6aGvPmw.png)
 
 Default appearance in OBS: </br>
-![Imgur Image](https://imgur.com/eG1Pb2N)
+![Imgur Image](https://i.imgur.com/eG1Pb2N.png)
