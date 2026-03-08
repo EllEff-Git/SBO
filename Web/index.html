@@ -2,23 +2,26 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.3.07.0937</title>
+<title>Spotify Overlay v0.3.08.0317</title>
 
 <script>
 
 // initialises last track as null on start
 let lastTrackID = null;
+let trackID = null;
 
-// progress bar trackers
+// initialises a boolean to check if the song has changed
+let trackChanged = false;
+
+// timer/progress bar variables
 let currentProgress, lastPercentage = 0;
-let duration = 1;
+let duration, tempProgress = 1;
 let lastUpdateTime = Date.now();
 
-// creates a boolean for pause state
+// initialises a boolean for pause state
 let isPaused = false;
 
-
-// creates global variables (websocket + all the elements)
+// initialises global variables (websocket + all the elements)
 let ws, player, cover, titleElement, artistElement, albumElement, bar, timer;
 
 // waits for the HTML to be fully loaded, then loads the rest
@@ -61,29 +64,33 @@ document.addEventListener("DOMContentLoaded", () => {
         // progress bar style
         document.documentElement.style.setProperty("--pbcNorm", Config.progressBarColor);
         document.documentElement.style.setProperty("--pbcPause", Config.progressBarPaused);
+
+        // stores the scrolling boolean
+        const enableScrolling = Config.enableScrolling;
         
         // saves the http port as a constant
         const wsPort = Config.httpPort;
+        // creates a websocket to that port
         ws = new WebSocket(`ws://127.0.0.1:${wsPort}/ws`);
         
         // debug/console printing in browser
         ws.onopen = () => {
-            console.log("WebSocket connected!");
+            console.log("Websocket connected!");
         };
         ws.onerror = (err) => {
-            console.error("WebSocket error:", err);
+            console.error("Websocket error: ", err);
         };
         ws.onclose = (evt) => {
-            console.warn("WebSocket closed:", evt);
+            console.warn("Websocket closed: ", evt);
         };
 
         // when it gets a new "message" (package) from python
         ws.onmessage = (event) => {
-        // opens and parses the data
+        // opens and stores the data
         const data = JSON.parse(event.data);
 
-        // creates a "track ID" from the title, artist and album
-        const trackID = data.title + data.artist + data.album;
+        // stores a "track ID" from the text fields + duration (timestamp)
+        trackID = data.title + data.artist + data.album + String(data.duration);
 
         // if the last "track ID" doesn't match the current one
         if(lastTrackID !== trackID){
@@ -97,6 +104,14 @@ document.addEventListener("DOMContentLoaded", () => {
             // reset progress (bar)
             currentProgress = data.progress || 0;
             duration = data.duration || 1;
+
+            // sets the flag for track changing to true
+            trackChanged = true;
+        }
+        // if the track ID is the same
+        else {
+            // sets the flag for track checking to true
+            trackChanged = false;
         }
 
         // check for paused state
@@ -113,10 +128,13 @@ document.addEventListener("DOMContentLoaded", () => {
         // grabs the album cover picture
         if(data.cover) cover.src = data.cover;
 
-        // uses the length-checking function to check the size of the text fields
-        checkTextSize(titleElement);
-        checkTextSize(artistElement);
-        checkTextSize(albumElement);
+        // if the text scrolling is enabled
+        if (enableScrolling) {
+            // uses the length-checking function to check the size of the text fields
+            checkTextSize(titleElement);
+            checkTextSize(artistElement);
+            checkTextSize(albumElement);
+        }
 
         // grabs the progress and duration (if neither is undefined)
         if(data.progress !== undefined && data.duration !== undefined){
@@ -124,12 +142,12 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!isPaused) {
                 // only updates the fields if the song *isn't* updated
                 currentProgress = data.progress;
+                // has a fallback of 1s to avoid breaking it
                 duration = data.duration || 1;
             }
         }
 
-        // fade in animation on load
-        player.style.transform = "translateY(0px)";
+        // fade in animation on load 
         player.style.opacity = 1;
 
         // set last update time
@@ -181,15 +199,19 @@ body {
     color: #ffffff;
 }
 
-/* a background element, added to add more blur*/
+/* a background element behind the player, added to add more blur/opaqueness */
 #background {
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
+    /* how rounded the corners are */
     border-radius: 12px;
+    /* color and opacity of the background */
     background: rgba(0,0,0,0.5);
+    /* how much blur to apply */
     backdrop-filter: blur(18px);
+    /* webkit tells specific systems to use the backdrop filter */
     -webkit-backdrop-filter: blur(18px);
-    /* very important that it has a low z-index: 0 (means it's below everything else) */
+    /* very important that it has a low z-index (0 means it's below everything else) */
     z-index: 0;
 }
 
@@ -197,20 +219,26 @@ body {
 #player {
     display: flex;
     align-items: center;
+    /* space between the picture and other elements */
     gap: 12px;
     /* first 3 are color, the last number in background dictates how opaque it is */
     background: rgba(25, 25, 25, var(--playerOpacity));
+    /* how much "padding" there is between each element (text, bar, picture) */
     padding: 12px;
     border-radius: 12px;
     /* the border dictates the thickness, color and existence of, well, a border around the player*/
     border: 2px var(--borderStyle) var(--borderColor);
-    transform: translateY(20px);
+    /* where to place the player (X=0, Y=0 puts it in the top left corner */
+    transform: translateY(0px);
+    transform: translateX(0px);
     /* short fade-in animation */
     transition: opacity 1s;
+    /* when the ws loads, it applies an opacity, the opacity here is how see-through it is *before* that */
     opacity: 0;
     /* player sizes */
     width: var(--playerWidth, 420px);
     height: var(--playerHeight, 90px);
+    /* the depth of the player (must be higher than background, equal or lower than elements) */
     z-index: 1;
 }
 
@@ -224,7 +252,9 @@ body {
     max-height: 90%;
     /* how rounded the corners should be */
     border-radius: 10px;
+    /* how to place the picture (contain/cover work okay) */
     object-fit: contain;
+    /* the color of the cover background - only visible when no picture is found */
     background: #424242;
     flex-shrink: 0;
     z-index: 1;
@@ -424,8 +454,8 @@ function progressAnimation() {
         requestAnimationFrame(progressAnimation);
         return;
     }
-    // sets the current time
-    const now = Date.now();
+    // stores the current time (-2 to help with some offset)
+    const now = (Date.now()-2);
     // calculates how long it's been since last update, turns into seconds
     const elapsed = (now - lastUpdateTime) / 1000;
     // sets the last update to current time
@@ -433,10 +463,22 @@ function progressAnimation() {
 
     // checks if the player is paused (more accurately, if it's not)
     if (!isPaused) {
-        // adds the passed time to current time (updating where the bar should be)
-        currentProgress += elapsed;
-        // checks if the song has "ended", forces the progress to end of song if so
-        if (currentProgress > duration) currentProgress = duration;
+        
+        // adds the elapsed time to a temp
+        tempProgress += elapsed;
+
+        // ensures the track hasn't changed and that adding the elapsed time results in a higher number (prevents the clock from going down)
+        if (!trackChanged && currentProgress < tempProgress) {
+            // adds the passed time to current time (updating where the bar should be)
+            currentProgress += elapsed;
+            // sets the temp variable to match
+            tempProgress = currentProgress;
+        }
+        // checks if the song's timer has run out, enforces a cap to the timer
+        if (currentProgress > duration) {
+            // sets the progress to match the length of the song, so that it doesn't go over
+            currentProgress = duration;
+        }
         // saves the last % the progress was at (so when it pauses it doesn't tilt)
         lastPercentage = (currentProgress / duration) * 100;
     }

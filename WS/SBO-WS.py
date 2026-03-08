@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 # Required for getting status from server
 
 
-SBO_WSver = "v0.3.08.0001"
+SBO_WSver = "v0.3.08.0412"
 """The program version (y.m.dd.hhmm)"""
 
 ### Directories ###
@@ -50,6 +50,8 @@ Config.read(ConfigPath, "utf8")
 
 httpPort = Config.getint("Function", "http_Port")
 """The websocket port (4-digit int)"""
+enableScrolling = Config.getboolean("Function", "enable_Text_Scrolling")
+"""Whether to enable text scrolling in HTML player (boolean)"""
 
 ### Visuals ###
 
@@ -129,7 +131,8 @@ HTMLconfig = {
     "borderStyle": borderStyle,
     "borderColor": borderColor,
     "progressBarColor": progressBarDefault,
-    "progressBarPaused": progressBarPaused
+    "progressBarPaused": progressBarPaused,
+    "enableScrolling": enableScrolling
 }
 # assembles a config dictionary that will get passed to HTML
 

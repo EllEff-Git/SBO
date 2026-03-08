@@ -15,7 +15,7 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.08.0001"
+SBO_ver = "v0.3.08.0445"
 """The SBO program version (y.m.dd.hhmm)"""
 
 
@@ -29,14 +29,26 @@ else:
     """The base directory of the program, where SBO-WS.exe resides"""
 
 
-sbotxtDir = os.path.join(directory, "WS", "sbo.txt")
-"""The directory where sbo.txt should/will live (inside SBO/WS/sbo.txt)"""
+### SBO WebSocket ###
+
+sbotxtPath = os.path.join(directory, "WS", "sbo.txt")
+"""The path to sbo.txt (SBO/WS/sbo.txt)"""
+
 sbowsExe = "SBO-WS.exe"
-"""The name of the SBO-WS exe file"""
-sbowsPath = os.path.join(directory, "WS", sbowsExe)
-"""The full path to the SBO-WS exe"""
-sbowsExeDir = os.path.dirname(sbowsPath) 
-"""The directory the SBO-WS exe lives in"""
+"""The name of the SBO-WS.exe file"""
+sbowsDir = os.path.join(directory, "WS") 
+"""The websocket folder (SBO/WS)"""
+sbowsPath = os.path.join(sbowsDir + sbowsExe)
+"""The full path to the SBO-WS.exe (SBO/WS/SBO-WS.exe)"""
+
+### SBO Bot ###
+
+sboBotExe = "SPO-Bot.exe"
+"""The name of the SBO-Bot.exe file"""
+sboBotDir = os.path.join(directory, "Bot")
+"""The bot's folder (SBO/Bot) """
+sboBotPath = os.path.join(sboBotDir + sboBotExe)
+"""The full path to the SBO-Bot.exe (SBO/Bot/SBO-Bot.exe)"""
 
 
 def Time():
@@ -76,6 +88,7 @@ sp_redirect = Config.get("Required", "http_Redirect")
 
 sp_cache = os.path.join(directory, "Data", "spotifycache.json")
 """The directory where the spotify cache (token) sits in"""
+
 
 if len(sp_client_secret) > 5:
     # checks if the client secret has at least 5 characters
@@ -200,11 +213,21 @@ def authPlayback():
 
 def runSBOws():
     """Function to start the SBO-WS.exe"""
-    with subprocess.Popen([sbowsPath], cwd=sbowsExeDir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as sbowsPrint:
-        # opens the SBO-WS.exe file and takes its outputs
+    with subprocess.Popen([sbowsPath], cwd=sbowsDir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as sbowsPrint:
+        # opens the SBO-WS.exe file and reads its output
         for line in sbowsPrint.stdout:
             # every time a new line is sent
             print(f"{Time()}[WS]: {line.rstrip()}")
+            # prints the line (clears right side)
+
+
+def runSBOBot():
+    """Function to start the SBO Twitch Bot"""
+    with subprocess.Popen([sboBotPath], cwd=sboBotDir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as sboBotPrint:
+        # opens the SBO-Bot.exe file and reads its output 
+        for line in sboBotPrint.stdout:
+            # every time a new line is sent
+            print(f"{Time()}[Bot]: {line.rstrip()}")
             # prints the line (clears right side)
 
 
@@ -305,7 +328,7 @@ def song():
         csProgress = int(csFull.get("progress_ms")/1000)
         # saves the current song progress in seconds
 
-        csUnixStart = int(time.time() - csProgress + 4)
+        csUnixStart = int(time.time() - csProgress + 1)
         # stores the start time of the song by taking current time and subtracting progress
         csUnixEnd = (csUnixStart + csLength)
         # stores the end time of the song (by adding up the start + duration)
@@ -321,7 +344,7 @@ def song():
 
             if pauseStart is None:
                 # if there's no set pause time
-                pauseStart = int(time.time() + 4)
+                pauseStart = int(time.time() + 1)
                 # sets the pause time to current time
 
             pauseState = True
@@ -350,18 +373,22 @@ def song():
             # can't access these if the playing song is local
             cstrackURL = csItem.get("external_urls")
             # stores the list that contains track's url
+            csURL = cstrackURL.get("spotify")
+            # grabs the spotify track URL
             csPlaylist = csFull.get("context")
             # stores the list that contains the playlist url
 
-        if csPlaylist != None:
-            # checks if user is playing a playlist
-            csPlaylistURL = csPlaylist.get("external_urls")
-            # gets *all* the URLs for the playlist
-            csPlaylistURL = csPlaylistURL.get("spotify")
-            # gets only the playlist URL (only one in there, unsure why it's a dictionary but ok Spotify)
-
-        csURL = cstrackURL.get("spotify")
-        # grabs the spotify track URL
+            if csPlaylist != None:
+                # checks if user is playing a playlist
+                csPlaylistURL = csPlaylist.get("external_urls")
+                # gets *all* the URLs for the playlist
+                csPlaylistURL = csPlaylistURL.get("spotify")
+                # gets only the playlist URL (only one in there, unsure why it's a dictionary but ok Spotify)
+        
+        else:
+            # if the song is local
+            csURL = "A local song"
+            csPlaylistURL = "No playlist"
 
         songNameList.append(csName)
         # adds the song name to list
@@ -395,7 +422,7 @@ def song():
                     )
         # merges all the song information together, split by newlines
 
-        with open(sbotxtDir, "w", encoding="utf-8") as txt:
+        with open(sbotxtPath, "w", encoding="utf-8") as txt:
             # opens the songData text file
             txt.write(ttvFull)
             # writes the full song information to the text file
