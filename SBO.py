@@ -1,5 +1,5 @@
-import subprocess, configparser
-# Required to run the websocket program and to read config
+import subprocess, configparser, socket
+# Required to run the websocket program, the python intercommunication system and to read config
 import os, sys, time, threading, datetime
 # Required for system information, background tasking and queueing
 import spotipy, requests, json
@@ -15,18 +15,18 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.08.0445"
+SBO_ver = "v0.3.08.1123"
 """The SBO program version (y.m.dd.hhmm)"""
 
 
 if getattr(sys, "frozen", False):
     # since the program bundled with pyInstaller, it's "frozen"
     directory = os.path.dirname(sys.executable)
-    """The base directory of the program, where SBO-WS.exe resides"""
+    """The base directory of the program, where SBO.exe resides"""
 else:
     # if somehow not in a bundled (frozen) state
     directory = os.path.dirname(__file__)
-    """The base directory of the program, where SBO-WS.exe resides"""
+    """The base directory of the program, where SBO.exe resides"""
 
 
 ### SBO WebSocket ###
@@ -38,17 +38,18 @@ sbowsExe = "SBO-WS.exe"
 """The name of the SBO-WS.exe file"""
 sbowsDir = os.path.join(directory, "WS") 
 """The websocket folder (SBO/WS)"""
-sbowsPath = os.path.join(sbowsDir + sbowsExe)
+sbowsPath = os.path.join(sbowsDir, sbowsExe)
 """The full path to the SBO-WS.exe (SBO/WS/SBO-WS.exe)"""
 
 ### SBO Bot ###
 
-sboBotExe = "SPO-Bot.exe"
+sboBotExe = "SBO-Bot.exe"
 """The name of the SBO-Bot.exe file"""
 sboBotDir = os.path.join(directory, "Bot")
 """The bot's folder (SBO/Bot) """
-sboBotPath = os.path.join(sboBotDir + sboBotExe)
+sboBotPath = os.path.join(sboBotDir, sboBotExe)
 """The full path to the SBO-Bot.exe (SBO/Bot/SBO-Bot.exe)"""
+
 
 
 def Time():
@@ -82,9 +83,29 @@ ConfigPath = os.path.join(directory, "config.ini")
 Config.read(ConfigPath, "utf8")
 # Where the config is read from, with UTF-8 format
 
+enableBot = Config.getboolean("Twitch-Bot", "enable_Twitch_Bot")
+"""Whether to enable the Twitch Bot part of the program (boolean)"""
+runBot = Config.getboolean("Twitch-Bot", "sbo_Runs_Bot")
+"""Whether to automatically start the bot (boolean)"""
+
+if runBot:
+    # if SBO should run the bot
+    enableBot = True
+    # also enables the bot
+
+if enableBot:
+    # if the bot is enabled
+    webHost =  socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    webHost.bind(("localhost", 6666))
+    webHost.listen(1)
+    # creates a websocket connection on localhost
+
 sp_client_ID = Config.get("Required", "spotify_Client_ID")
+"""The Spotify Client ID from Developer Dashboard (string)"""
 sp_client_secret = Config.get("Required", "spotify_Client_Secret")
+"""The Spotify Secret from Developer Dashboard (string)"""
 sp_redirect = Config.get("Required", "http_Redirect")
+"""The Spotify redirect URL from Developer Dashboard"""
 
 sp_cache = os.path.join(directory, "Data", "spotifycache.json")
 """The directory where the spotify cache (token) sits in"""
@@ -106,7 +127,7 @@ sessionID = requests.Session()
 """Tells the auth to keep one stable connection, rather than re-connecting every request"""
 
 authorisation = SpotifyOAuth(
-    scope = "user-read-playback-state", 
+    scope = ["user-read-playback-state", "user-modify-playback-state"], 
     client_id = sp_client_ID, 
     client_secret = sp_client_secret, 
     redirect_uri = sp_redirect,
@@ -207,7 +228,90 @@ def authPlayback():
 
 
 
-### TTV ###
+### Redis Listener ###
+
+
+
+def webHostListener():
+    """Redis message listener"""
+
+    client_socket, client_address = webHost.accept()
+    # waits for a client connection
+    print(f"{Time()}[PtP] Inter-python-connection made")
+    # prints a Python to Python (Peer to Peer) inform
+
+    while True:
+        # while the program is running
+        rawMessage = client_socket.recv(1024)
+        # grabs any messages sent
+
+        if rawMessage:
+            # if there's a message
+            message = rawMessage.decode()
+            # decodes it (bytes -> string)
+
+            print(f"{Time()}[RWS] Command received: ", message)
+            # prints a Python to Python (Peer to Peer) inform
+
+            if message == "Skip":
+                # if the message is skip
+                skip()
+                # calls the skip function
+            elif message == "Pause":
+                # if the message is pause
+                pause()
+                # calls the pause function
+            elif message == "Resume":
+                # if the message is resume
+                resume()
+                # calls the resume function
+            elif message == "Previous":
+                # if the message is previous
+                previous()
+                # calls the previous function
+
+            elif message.startswith("Queue:"):
+                # if the message has "Queue" in it
+                x, uri = message.split(" ", 1)
+                # splits the message to first and second halves by the first space (just after Queue: )
+                queue(uri)
+                # calls the queue function with the URI
+
+
+
+### Spotify Actions ###
+
+
+
+def skip():
+    """Skips to next song"""
+    main.next_track()
+    print("Skipped song")
+
+def pause():
+    """Pauses playback"""
+    main.pause_playback()
+    print("Paused song")
+
+def resume():
+    """Resumes playback"""
+    main.start_playback()
+    print("Resumed")
+
+def previous():
+    main.previous_track()
+    print("Previous song")
+
+def queue(link):
+    try:
+        main.add_to_queue(link)
+        print("Song added to queue")
+    except:
+        print("Invalid format, try again")
+
+
+
+### SBO WebSocket ###
 
 
 
@@ -219,6 +323,11 @@ def runSBOws():
             # every time a new line is sent
             print(f"{Time()}[WS]: {line.rstrip()}")
             # prints the line (clears right side)
+
+
+
+### Twitch Bot ###
+
 
 
 def runSBOBot():
@@ -511,10 +620,10 @@ def looper():
                 trackCounter += 1
                 # adds 1 to counter (means track has changed)
 
-            time.sleep(2.5)
-            # waits 5 seconds
+            time.sleep(1)
+            # waits a second
             continue
-            # sends back to the start of looper to check for a new song (5 second checks after a song change to check for a song skip)
+            # sends back to the start of looper to check for a new song (1 second checks after a song change to check for a song skip)
 
         if not playing and not pauseUpdated and currentURI == songURI:
         # if the song is paused, hasn't yet updated the pause state *and* the song is the same
@@ -551,10 +660,25 @@ songThread = threading.Thread(target = song)
 songThread.start()
 # starts the song thread to get updated info
 
+
 sbowsThread = threading.Thread(target = runSBOws)
 # creates a thread for the SBO-WS program to run in - this way it won't stop the main process
 sbowsThread.start()
 # starts the SBO-WS thread
+
+if runBot:
+    # if the config option to have SBO run the bot program is enabled
+    botThread = threading.Thread(target = runSBOBot)
+    # creates a thread for the SBO-Bot program to run in - this way it won't stop the main process
+    botThread.start()
+    # starts the SBO-Bot thread
+
+if enableBot:
+    # if the config option to enable the bot is enabled
+    redisThread = threading.Thread(target = webHostListener)
+    # creates a thread for the redis connection to run in - this way it won't stop the main process
+    redisThread.start()
+    # starts the redis thread
 
 looper()
 # runs the looper, which manages the song refresh cycles

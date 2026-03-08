@@ -10,7 +10,15 @@ There's tons of configuration in the included config.ini file, and full access t
 
 </br>
 
-Requires a Spotify Premium account to create a Spotify developer app in order to fetch playback
+SBO now also includes an optional Twitch Bot, which can be used to request information about the currently playing state (!playlist, !song/!track)
+
+</br>
+
+The bot also, optionally, features playback control support inside Twitch chat for authorised users (default: VIP or higher, optionally: subscribers or higher)
+
+</br>
+
+Requires a Spotify Premium account, which is used to create a Spotify developer app, in order to fetch/control playback
 
 </br>
 
