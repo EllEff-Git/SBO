@@ -1,4 +1,4 @@
-import configparser, os, sys, threading, random
+import configparser, os, sys, threading, time
 # Required for basic function and getting the config options for bot
 import asyncio, asqlite, socket, aiohttp
 # Required to connect to the bot
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 
-SBO_Bot_ver = "v0.3.09.0400"
+SBO_Bot_ver = "v0.3.10.0017"
 """The SBO Bot version (y.m.dd.hhmm)"""
 
 
@@ -30,9 +30,10 @@ SBO_Bot_ver = "v0.3.09.0400"
 logFormat = "%(message)s"
 # changes the format from "[systemtime] [TYPE] message" to just "message"
 
-if not logging.getLogger("Bot").hasHandlers():
-    # checks if the bot logger has handlers (well, if it doesn't)
-    logging.basicConfig(level=logging.INFO, format=logFormat)
+logging.basicConfig(
+    level = logging.INFO, 
+    format = logFormat
+    )
     # sets up a basic config with the logging level and format
 
 logging.getLogger("twitchio").setLevel(logging.WARNING)
@@ -41,7 +42,7 @@ logging.getLogger("twitchio").setLevel(logging.WARNING)
 logging.getLogger("twitchio.client").setLevel(logging.ERROR)
 # sets the TwitchIO Client to only print on error or higher (there's a couple irrelevant warnings)
 
-LOGGER = logging.getLogger("Bot")
+LOGGER = logging.getLogger("BOT")
 # starts the consoler logger
 
 
@@ -114,62 +115,66 @@ except:
 
 if playbackControl:
     # if the Twitch chat playback control is enabled
+    print(f"Twitch Chat playback control is enabled", flush=True)
+    # user "warn" print
     webClient = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    webClient.connect(("localhost", 6666))
+    # sets up the webclient socket
+    webClient.connect(("127.0.0.1", 6666))
     # creates a socket connection on localhost
+    print(f"Attempting to connect to PTP", flush=True)
+    # (debug) print
 
 def dataPasser(command: str, uri: str):
     """A function to send commands to SBO (takes the command and spotify URI/URL as parameters)"""
-    while True:
-        # while the program is running
-        if not playbackControl:
-            # if playback is disabled
-            return "Playback control disabled"
-            # sends the response back to the bot so it can reply
+    if not playbackControl:
+        # if playback is disabled
+        return "Playback control disabled"
+        # sends the response back to the bot so it can reply
 
-        if command == "skip":
-            # if the command is skip
-            msg = "Skip"
-            webClient.send(msg.encode())
-            # sends a message to SBO to skip
-            return "Skipped"
-            # sends the response back to the bot so it can reply
+    if command == "skip":
+        # if the command is skip
+        msg = "Skip"
+        webClient.send(msg.encode())
+        # sends a message to SBO to skip
+        return "Skipped"
+        # sends the response back to the bot so it can reply
 
-        elif command == "pause":
-            # if the command is pause
-            msg = "Pause"
-            webClient.send(msg.encode())
-            # sends a message to SBO to pause
-            return "Paused"
-            # sends the response back to the bot so it can reply
-        
-        elif command == "resume":
-            # if the command is resume
-            msg = "Resume"
-            webClient.send(msg.encode())
-            # sends a message to SBO to resume
-            return "Resumed"
-            # sends the response back to the bot so it can reply
+    elif command == "pause":
+        # if the command is pause
+        msg = "Pause"
+        webClient.send(msg.encode())
+        # sends a message to SBO to pause
+        return "Paused"
+        # sends the response back to the bot so it can reply
+    
+    elif command == "resume":
+        # if the command is resume
+        msg = "Resume"
+        webClient.send(msg.encode())
+        # sends a message to SBO to resume
+        return "Resumed"
+        # sends the response back to the bot so it can reply
 
-        elif command == "previous":
-            # if the command is previous
-            msg = "Previous"
-            webClient.send(msg.encode())
-            # sends a message to SBO to pause
-            return "Went back"
-            # sends the response back to the bot so it can reply
+    elif command == "previous":
+        # if the command is previous
+        msg = "Previous"
+        webClient.send(msg.encode())
+        # sends a message to SBO to pause
+        return "Went back"
+        # sends the response back to the bot so it can reply
 
-        elif command == "queue":
-            # if the command has queue (means it has a link, too)
-            msg = f"Queue: {uri}"
-            webClient.send(msg.encode())
-            # sends the link 
-            return "Queued song"
-            # sends the response back to the bot so it can reply
-        
-        else:
-            print("DEBUG: unknown format for web socket")
-            return "Error with command"
+    elif command == "queue":
+        # if the command has queue (means it has a link, too)
+        msg = f"Queue: {uri}"
+        webClient.send(msg.encode())
+        # sends the link 
+        return "Queued song"
+        # sends the response back to the bot so it can reply
+    
+    else:
+        # shouldn't ever get other commands
+        print(f"Playback control ready", flush=True)
+        # indicates that the playback control has been started (since the run sends bs parameters)
 
 
 
@@ -293,7 +298,7 @@ class Bot(commands.AutoBot):
                     # if the channel is live
                     if not logged:
                         # if the live status hasn't already been logged once
-                        LOGGER.info(f"{ttvName} is now live!")
+                        print(f"{ttvName} is now live!", flush=True)
                         # prints a live message
                         logged = True
                         # changes boolean to True to prevent constant logging
@@ -360,7 +365,7 @@ class Bot(commands.AutoBot):
 ### Ready Console Log ### 
 
     async def event_ready(self) -> None:
-        LOGGER.info(f"Successfully logged in as {self.botName}")
+        print(f"Successfully logged in as {self.botName}", flush=True)
         # prints the login message to console
         asyncio.create_task(self.checkLiveCheck())
         # creates a "task" to run checkLiveCheck
@@ -391,6 +396,7 @@ class CommandComponent(commands.Component):
 
     @commands.command()
     @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=300, key=commands.BucketType.chatter)
     async def playlist(self, context: commands.Context) -> None:
         """!playlist"""
 
@@ -405,7 +411,6 @@ class CommandComponent(commands.Component):
                 # if the playlist isn't set (SBO sets it to this if no playlist is active)
                 await context.reply(f"{ttvName} is not currently listening to a playlist")
                 # sends a playlist-less message
-
             else:
                 # if the playlist return is anything else
                 await context.reply(f"Current playlist: {playlist}")
@@ -415,6 +420,7 @@ class CommandComponent(commands.Component):
 
     @commands.command(aliases=["song"])
     @commands.cooldown(rate = 1, per=15, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=180, key=commands.BucketType.chatter)
     async def track(self, context: commands.Context) -> None:
         """!track and !song"""
 
@@ -433,6 +439,10 @@ class CommandComponent(commands.Component):
                 # if the song is local (SBO sets it to this if a local song is detected)
                 await context.reply(f"{ttvName} is listening to a locally stored song")
                 # sends a local song message
+            elif trackURL == None:
+                # if the song is empty
+                await context.reply(f"{ttvName} is not listening to Spotify")
+                print(f"If you see this message, but your Spotify is playing, check the status of SBO and Spotify", flush=True)
             else:
                 # if the song return is anything else
                 await context.reply(f"Current song: {track} by {artist}. {trackURL}")
@@ -441,7 +451,7 @@ class CommandComponent(commands.Component):
 ### Skip ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=10, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
     async def skip(self, context: commands.Context) -> None:
         """!skip"""
 
@@ -454,12 +464,12 @@ class CommandComponent(commands.Component):
                 await context.reply("Skipped")
             
             else:
-                print("No permission")
+                print(f"No permission", flush=True)
 
 ### Pause ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=10, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
     async def pause(self, context: commands.Context) -> None:
         """!pause"""
 
@@ -475,7 +485,7 @@ class CommandComponent(commands.Component):
 ### Resume ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=10, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
     async def resume(self, context: commands.Context) -> None:
         """!resume"""
 
@@ -492,7 +502,7 @@ class CommandComponent(commands.Component):
 ### Previous ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=10, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
     async def previous(self, context: commands.Context) -> None:
         """!previous"""
 
@@ -509,7 +519,7 @@ class CommandComponent(commands.Component):
 ### Queue ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=15, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
     async def queue(self, context: commands.Context) -> None:
         """!queue"""
 
@@ -538,25 +548,35 @@ class CommandComponent(commands.Component):
 ### SBO ###
 
     @commands.command(aliases=["SBO"])
-    @commands.cooldown(rate = 1, per=60, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=300, key=commands.BucketType.channel)
     async def sbo(self, context: commands.Context) -> None:
         """!sbo / !SBO"""
 
-        await context.reply(f"The SBO Bot (esbeohBot) is a Twitch bot made by LP, currently on {SBO_Bot_ver}")
+        await context.reply(f"The SBO Bot (esbeohBot) is a Twitch bot made by LP to simplify Spotify-Twitch connection, currently on {SBO_Bot_ver}")
         # replies with the SBO details
 
-### Unfound Command ###
+### Command Error ###
 
     @commands.Component.listener()
-    async def unfound(self, context: commands.Context, error: Exception) -> None:
-        """Handles commands that don't exist (if the message has the right prefix, wrong cmd)"""
+    async def error(self, context: commands.Context, error: Exception) -> None:
+        """Handles any command error"""
         if isinstance(error, commands.CommandNotFound):
             # if the command returns a "command not found"
             return
-            # doesn't return anything
-        LOGGER.error(f"Error handling {context.command}: {error}")
-        # if it's something else
-
+            # doesn't return anything, because it's expected behavior
+        elif isinstance(error, commands.exceptions.CommandOnCooldown):
+            # if the command returns a "cooldown"
+            await print(f"Command on cooldown", flush=True)
+            # logs a cooldown message
+        elif isinstance(error, commands.exceptions.MissingRequiredArgument):
+            # if there's a missing
+            await context.reply(f"Missing parameter")
+            # sends a parameter message
+        else:
+            # if it's something else
+            await print(f"Error handling {context.command}: {error}", flush=True)
+            # logs an error
+            
 ### Database / Token Storage ###
 
 async def setup_database(db: asqlite.Pool) -> tuple[list[tuple[str, str]], list[eventsub.SubscriptionPayload]]:
@@ -622,7 +642,7 @@ def logWriter() -> None:
         # runs the runner...
     except KeyboardInterrupt:
         # user quits
-        LOGGER.warning("Shutting down due to KeyboardInterrupt")
+        print(f"Quitting SBOT", flush=True)
 
 
 
@@ -632,16 +652,16 @@ def logWriter() -> None:
 
 if missingID:
     # checks if the channelID exists (required for connection)
-        print(f"ChannelID not found, please enter it into the config file")
+        print(f"ChannelID not found, please enter it into the config file", flush=True)
         # user inform
-        input("Press enter to exit")
+        input("Press enter to exit", flush=True)
         raise SystemExit
 
 if not ttvName:
     # checks if the channel name exists (required for conduit/connection)
-        print(f"Channel name not found, please enter it into the config file")
+        print(f"Channel name not found, please enter it into the config file", flush=True)
         # user inform
-        input("Press enter to exit")
+        input("Press enter to exit", flush=True)
         raise SystemExit
 
 if playbackControl:

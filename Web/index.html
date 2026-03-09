@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.3.09.0731</title>
+<title>Spotify Overlay v0.3.09.0821</title>
 
 <script>
 
@@ -304,19 +304,23 @@ body, html, #background, #player {
     z-index: 2;
 }
 
-/* main info, all player fields inherit (text, bar, timer) */
+/* main info, all player fields inherit this (text, bar, timer) */
 #info {
+    /* allows the fields to sit in the spots they need, vertically */
     display: flex;
     flex-direction: column;
+    /* hides the parts of text that spill over */
     overflow: hidden;
     flex: 1;
+    /* higher than player */
     z-index: 2;
+    /* inherits size from player and cover */
     width: auto;
     max-width: none;
-    text-rendering: optimizeLegibility;
+    text-shadow: 1px 2px #000000;
 }
 
-/* the text fields */
+/* the text fields inherit these */
 .text-wrapper {
     display: flex;
     justify-content: flex-start;
@@ -334,13 +338,12 @@ body, html, #background, #player {
     min-width: 0;
     /* stops the fields from submitting to other size restrictions */
     flex-shrink: 0;
-    /* the size of the text (overriden by title */
+    /* the size of the text (overriden by title) */
     font-size: 14px; 
-    /* the text styling (overriden by title */
+    /* the text styling (overriden by title) */
     font-weight: var(--supportWeights);
     font-style: var(--supportStyles);
     color: var(--supportColors, #ffffff);
-    display: inline-block;
 }
 
 /* the name/title field of the song */
@@ -373,21 +376,29 @@ body, html, #background, #player {
 /* the progress bar + timer container */
 #progress-container {
     display: flex;
+    /* aligns the bar and timer so they're equally spaced out from the edge and picture*/
     align-items: center;
     justify-content: space-between;
+    /* the gap between the bar and timer*/
     gap: 6px;
     margin-top: 4px;
+    /* can't be larger than the info field itself*/
     max-width: var(--maxInfoWidth, 80%);
 }
 
 /* progress bar (empty) */
 #progress {
     flex: 1;
+    /* sets minimum width */
     min-width: 50px;
     height: 4px;
-    background: #333;
+    /* the color of the empty part of the bar */
+    background: #949494;
     margin-top: 6px;
+    /* how rounded the corners are */
     border-radius: 2px;
+    /* border style around the progress bar */
+    border: 1px, solid, #000000;
     overflow: hidden;
     position: relative;
 }
@@ -395,6 +406,7 @@ body, html, #background, #player {
 /* progress bar (filled) */
 #bar {
     height: 100%;
+    /* the color of the full part of the bar */
     background: var(--pbcNorm, #1ED760);
     width: 0%;
     transition: width 0.3s linear;
@@ -420,15 +432,15 @@ body, html, #background, #player {
 
 /* each individual text field's scroll rules */
 .title.scrolling {
-    animation: scrollTitle 20s linear infinite alternate;
+    animation: scrollTitle 18s linear infinite alternate;
 }
 
 .artist.scrolling {
-    animation: scrollArtist 30s linear infinite alternate;
+    animation: scrollArtist 20s linear infinite alternate;
 }
 
 .album.scrolling {
-    animation: scrollAlbum 25s linear infinite alternate;
+    animation: scrollAlbum 20s linear infinite alternate;
 }
 
 /* keyframes for title scrolling */

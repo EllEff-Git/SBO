@@ -15,7 +15,7 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.09.0444"
+SBO_ver = "v0.3.10.0021"
 """The SBO program version (y.m.dd.hhmm)"""
 
 
@@ -96,9 +96,11 @@ if runBot:
 if enableBot:
     # if the bot is enabled
     webHost =  socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    webHost.bind(("localhost", 6666))
+    webHost.bind(("127.0.0.1", 6666))
     webHost.listen(1)
     # creates a websocket connection on localhost
+    print(f"{Time()}[PTP]: Started inter-python connection")
+    # debug print
 
 sp_client_ID = Config.get("Required", "spotify_Client_ID")
 """The Spotify Client ID from Developer Dashboard (string)"""
@@ -237,7 +239,7 @@ def webHostListener():
 
     client_socket, client_address = webHost.accept()
     # waits for a client connection
-    print(f"{Time()}[PtP] Inter-python-connection made")
+    print(f"{Time()}[PTP]: Inter-python-connection made")
     # prints a Python to Python (Peer to Peer) inform
 
     while True:
@@ -250,7 +252,7 @@ def webHostListener():
             message = rawMessage.decode()
             # decodes it (bytes -> string)
 
-            print(f"{Time()}[RWS] Command received: ", message)
+            print(f"{Time()}[PTP]: Command received:", message)
             # prints a Python to Python (Peer to Peer) inform
 
             if message == "Skip":
@@ -277,6 +279,11 @@ def webHostListener():
                 queue(uri)
                 # calls the queue function with the URI
 
+            else:
+                # if the command isn't recognized
+                print("Unknown command in PtP (DEBUG)")
+
+
 
 
 ### Spotify Actions ###
@@ -286,28 +293,28 @@ def webHostListener():
 def skip():
     """Skips to next song"""
     main.next_track()
-    print("Skipped song")
+    print(f"{Time()}[SBOT]: Skipped song")
 
 def pause():
     """Pauses playback"""
     main.pause_playback()
-    print("Paused song")
+    print(f"{Time()}[SBOT]: Paused song")
 
 def resume():
     """Resumes playback"""
     main.start_playback()
-    print("Resumed")
+    print(f"{Time()}[SBOT]: Resumed")
 
 def previous():
     main.previous_track()
-    print("Previous song")
+    print(f"{Time()}[SBOT]: Previous song")
 
 def queue(link):
     try:
         main.add_to_queue(link)
-        print("Song added to queue")
+        print(f"{Time()}[SBOT]: Song added to queue")
     except:
-        print("Invalid link format")
+        print(f"{Time()}[SBOT]: Invalid link format")
 
 
 
@@ -336,7 +343,7 @@ def runSBOBot():
         # opens the SBO-Bot.exe file and reads its output 
         for line in sboBotPrint.stdout:
             # every time a new line is sent
-            print(f"{Time()}[Bot]: {line.rstrip()}")
+            print(f"{Time()}[SBOT]: {line.rstrip()}")
             # prints the line (clears right side)
 
 
@@ -597,7 +604,7 @@ def looper():
         songLeft = (songDur - songProg)
         # calculates the time left on the song
 
-        if (currentURI != songURI) or ((songStart - 5) > storedStart) or (pauseUpdated and playing):
+        if (currentURI != songURI) or ((songStart-5) > storedStart) or (pauseUpdated and playing):
         # if there's a song change (if the URI has changed or the start timestamp is higher than the stored timestamp) or if the pause has been triggered
 
             if not pauseUpdated:
@@ -624,7 +631,7 @@ def looper():
                 trackCounter += 1
                 # adds 1 to counter (means track has changed)
 
-            time.sleep(1)
+            time.sleep(2)
             # waits a second
             continue
             # sends back to the start of looper to check for a new song (1 second checks after a song change to check for a song skip)
@@ -637,17 +644,17 @@ def looper():
             # sets the pause check to True, meaning it has been checked and acted on
             print(f"\n{Time()}[SONG]: Paused on: {songName}")
             # user inform (new line to split from main updates, only prints once anyway)
-            sleepfor = 2.5
+            sleepfor = 2
             # sets the sleep timer to the config-set refresh time
 
         else:
         # if the current song is the same, and is not paused
-            if songLeft > 2.5:
-                # checks if there's more than 5s left
-                sleepfor = 2.5
-                # sets the sleep timer to 5s
+            if songLeft > 2:
+                # checks if there's more than 2s left
+                sleepfor = 2
+                # sets the sleep timer to 2s
             else:
-                # if there's less song time left than 5s
+                # if there's less song time left than 2s
                 sleepfor = songLeft + 1
                 # sleeps for the rest of the song (+1s to ensure the song has ended)
 
@@ -670,6 +677,14 @@ sbowsThread = threading.Thread(target = runSBOws)
 # creates a thread for the SBO-WS program to run in - this way it won't stop the main process
 sbowsThread.start()
 # starts the SBO-WS thread
+
+
+if enableBot:
+    # if the config option to enable the bot is on (enabled by bot runner if not already)
+    ptpThread = threading.Thread(target = webHostListener)
+    # creates a thread for the webhost listener
+    ptpThread.start()
+    # starts the ptp thread
 
 
 if runBot:
