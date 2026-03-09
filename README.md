@@ -18,6 +18,12 @@ The bot also, optionally, features playback control support inside Twitch chat f
 
 </br>
 
+The installation guide is found at https://elleffnotelf.com/guides/sbo </br>
+The bot installation guide is found at https://elleffnotelf.com/guides/sbo-bot </br>
+The bot's command info is found at https://elleffnotelf.com/guides/sbo-commands </br>
+
+</br>
+
 Requires a Spotify Premium account, which is used to create a Spotify developer app, in order to fetch/control playback
 
 </br>

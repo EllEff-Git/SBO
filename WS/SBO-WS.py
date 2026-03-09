@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 # Required for getting status from server
 
 
-SBO_WSver = "v0.3.08.0412"
+SBO_WSver = "v0.3.09.0414"
 """The program version (y.m.dd.hhmm)"""
 
 ### Directories ###
@@ -33,7 +33,7 @@ jsonCfg = os.path.join(directory, "config.json")
 ### Variables ###
 
 program = FastAPI()
-"""Creates a FastAPI program"""
+"""Creates a FastAPI client"""
 clients = set()
 """Creates a set/collection of elements"""
 
@@ -240,7 +240,8 @@ async def websocket(ws: WebSocket):
             "cover": sbo.get("Spotify Image", ""),
             "progress": songProg,
             "duration": songDur,
-            "paused": sbo.get("Pause State", "")
+            "paused": sbo.get("Pause State", ""),
+            "id": sbo.get("Track ID", "")
         })
 
         await ws.send_text(payload)
@@ -264,7 +265,8 @@ async def websocket(ws: WebSocket):
                 "cover": sbo.get("Spotify Image", ""),
                 "progress": songProg,
                 "duration": songDur,
-                "paused": sbo.get("Pause State", "")
+                "paused": sbo.get("Pause State", ""),
+                "id": sbo.get("Track ID", "")
             })
             # constructs a "payload" (data to send to html) out of the read file data
 

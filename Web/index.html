@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.3.08.0317</title>
+<title>Spotify Overlay v0.3.09.0731</title>
 
 <script>
 
@@ -18,11 +18,17 @@ let currentProgress, lastPercentage = 0;
 let duration, tempProgress = 1;
 let lastUpdateTime = Date.now();
 
+// initialises field size variables
+let maxInfoSize, maxTextSize = 0;
+
 // initialises a boolean for pause state
 let isPaused = false;
 
 // initialises global variables (websocket + all the elements)
 let ws, player, cover, titleElement, artistElement, albumElement, bar, timer;
+
+// initialises widths for player 
+let playerWidthRaw, playerHeightRaw = 0;
 
 // waits for the HTML to be fully loaded, then loads the rest
 document.addEventListener("DOMContentLoaded", () => {
@@ -46,9 +52,15 @@ document.addEventListener("DOMContentLoaded", () => {
         .then(Config =>{
 
         // sets all the variables that the elements use based on config.json
+        
+        // stores the player size here first (easier to debug if I don't have to reload application to re-get config)
+        playerWidthRaw = Config.playerWidth // 500
+        // playerHeightRaw is *typically* the boundary to the image size, which is 90% of the height
+        playerHeightRaw = Config.playerHeight // 100
+
         // player size + opacity
-        document.documentElement.style.setProperty("--playerWidth", Config.playerWidth + "px");
-        document.documentElement.style.setProperty("--playerHeight", Config.playerHeight + "px")
+        document.documentElement.style.setProperty("--playerWidth", playerWidthRaw + "px");
+        document.documentElement.style.setProperty("--playerHeight", playerHeightRaw + "px")
         document.documentElement.style.setProperty("--playerOpacity", Config.playerOpacity);
         // title styling
         document.documentElement.style.setProperty("--titleStyle", Config.titleStyle);
@@ -64,6 +76,16 @@ document.addEventListener("DOMContentLoaded", () => {
         // progress bar style
         document.documentElement.style.setProperty("--pbcNorm", Config.progressBarColor);
         document.documentElement.style.setProperty("--pbcPause", Config.progressBarPaused);
+
+        // sets a constant for the max size a text can be (2x wider than the player)
+        maxTextSize = (playerWidthRaw * 2);
+        // sets a constant for the max size the info fields can be (removes the padding and image size from player size)
+        maxInfoSize = (playerWidthRaw - (playerHeightRaw * 0.9) - 12);
+
+        // defines the max size for the text fields (2x player)
+        document.documentElement.style.setProperty("--maxTextWidth", maxTextSize + "px");
+        // defines the max size for the info fields (text, progress container (bar + timer))
+        document.documentElement.style.setProperty("--maxInfoWidth", maxInfoSize + "px");
 
         // stores the scrolling boolean
         const enableScrolling = Config.enableScrolling;
@@ -89,8 +111,8 @@ document.addEventListener("DOMContentLoaded", () => {
         // opens and stores the data
         const data = JSON.parse(event.data);
 
-        // stores a "track ID" from the text fields + duration (timestamp)
-        trackID = data.title + data.artist + data.album + String(data.duration);
+        // stores a "track ID" from the track counter ID made by SBO
+        trackID = String(data.id);
 
         // if the last "track ID" doesn't match the current one
         if(lastTrackID !== trackID){
@@ -152,24 +174,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // set last update time
         lastUpdateTime = Date.now();
-        };
+
+        }; // closes the package loop
     });
 });
 
 </script>
 
+<!-- the player element, contains everything-->
 <div id="player">
+    <!-- the background element, sits below everything-->
     <div id="background"></div>
+    <!-- the image/cover -->
     <img id="cover" src="">
+    <!-- the field container-->
     <div id="info">
+        <!-- the text wrapper for the title field -->
         <div class="text-wrapper">
             <div class="title" id="title"></div>
         </div>
+        <!-- the text wrapper for the artist field -->
         <div class="text-wrapper">
             <div class="artist" id="artist"></div>
         </div>
-        <div class="text-wrapper"></div>
+        <!-- the text wrapper for the album field-->
+        <div class="text-wrapper">
             <div class="album" id="album"></div>
+        </div>
+        <!-- the progress container, houses the progress bar and timer-->
         <div id="progress-container">
             <div id="progress"><div id="bar"></div></div>
             <div id="timer">0:00 / 0:00</div>
@@ -191,12 +223,23 @@ There's a ton of customisation to be done, and I wish the most amazing Spotify c
 glhf <3
 */
 
+/* some mega-override element that breaks everything */
+div {
+    display: flex;
+    /* if this isn't set, uses block by default, which prevents text element scaling
+    that means the text fields just use the max width they have, and *always* scroll */
+}
+
 /* base page body */
 body {
-    margin: 5;
     background: transparent;
     font-family: "Segoe UI", sans-serif;
     color: #ffffff;
+}
+
+/* width setting globally */
+body, html, #background, #player {
+    width: 100%;
 }
 
 /* a background element behind the player, added to add more blur/opaqueness */
@@ -210,8 +253,6 @@ body {
     /* how much blur to apply */
     backdrop-filter: blur(18px);
     /* webkit tells specific systems to use the backdrop filter */
-    -webkit-backdrop-filter: blur(18px);
-    /* very important that it has a low z-index (0 means it's below everything else) */
     z-index: 0;
 }
 
@@ -223,8 +264,9 @@ body {
     gap: 12px;
     /* first 3 are color, the last number in background dictates how opaque it is */
     background: rgba(25, 25, 25, var(--playerOpacity));
-    /* how much "padding" there is between each element (text, bar, picture) */
+    /* how much "padding" there is between each element (text, bar, picture, edges) */
     padding: 12px;
+    /* how rounded the player corners should be */
     border-radius: 12px;
     /* the border dictates the thickness, color and existence of, well, a border around the player*/
     border: 2px var(--borderStyle) var(--borderColor);
@@ -252,12 +294,14 @@ body {
     max-height: 90%;
     /* how rounded the corners should be */
     border-radius: 10px;
-    /* how to place the picture (contain/cover work okay) */
+    /* how to place the picture, contain ensures it fits into the smaller of the two size constraints (usually height) */
     object-fit: contain;
     /* the color of the cover background - only visible when no picture is found */
     background: #424242;
+    /* doesn't allow it to shrink */
     flex-shrink: 0;
-    z-index: 1;
+    /* z-index of 2 is higher than the player itself */
+    z-index: 2;
 }
 
 /* main info, all player fields inherit (text, bar, timer) */
@@ -266,17 +310,37 @@ body {
     flex-direction: column;
     overflow: hidden;
     flex: 1;
-    z-index: 1;
+    z-index: 2;
+    width: auto;
+    max-width: none;
+    text-rendering: optimizeLegibility;
+}
+
+/* the text fields */
+.text-wrapper {
+    display: flex;
+    justify-content: flex-start;
+    position: relative;
+    overflow: hidden;
+    white-space: nowrap;
 }
 
 /* all text field-wide configs */
 .title, .artist, .album {
-    white-space: nowrap;
-    overflow: visible;
-    text-overflow: ellipsis;
     position: relative;
-    flex-shrink: 1;
+    /* lets the text overflow */
+    text-overflow: clip;
+    /* ensures they always have some space */
     min-width: 0;
+    /* stops the fields from submitting to other size restrictions */
+    flex-shrink: 0;
+    /* the size of the text (overriden by title */
+    font-size: 14px; 
+    /* the text styling (overriden by title */
+    font-weight: var(--supportWeights);
+    font-style: var(--supportStyles);
+    color: var(--supportColors, #ffffff);
+    display: inline-block;
 }
 
 /* the name/title field of the song */
@@ -284,16 +348,26 @@ body {
     /* the title styling */
     font-weight: var(--titleWeight);
     font-style: var(--titleStyle);
+    color: var(--titleColor, #ffffff);
+    /* the size of the title text */
     font-size: 18px;
-    color: var(--titleColor, #ffffff)
+    /* makes the text scale to fit without restrictions */
+    width: auto;
+    max-width: none;
 }
 
-/* the artist and album fields */
-.artist, .album {
-    font-weight: var(--supportWeights);
-    font-style: var(--supportStyles);
-    font-size: 14px;
-    color: var(--supportColors, #ffffff)
+/* the artist field */
+.artist {
+    /* makes the text scale to fit without restrictions */
+    width: auto;
+    max-width: none;
+}
+
+/* the album field */
+.album {
+    /* makes the text scale to fit without restrictions */
+    width: auto;
+    max-width: none;
 }
 
 /* the progress bar + timer container */
@@ -302,7 +376,8 @@ body {
     align-items: center;
     justify-content: space-between;
     gap: 6px;
-    margin-top: 4px;    
+    margin-top: 4px;
+    max-width: var(--maxInfoWidth, 80%);
 }
 
 /* progress bar (empty) */
@@ -326,7 +401,6 @@ body {
     position: absolute;
     top: 0;
     left: 0;
-    z-index: 2;
 }
 
 /* progress bar (paused) */
@@ -342,13 +416,6 @@ body {
     opacity: 0.8;
     color: var(--supportColors, #ffffff);
     font-style: var(--supportStyles);
-}
-
-.text-wrapper {
-    position: relative;
-    overflow: hidden;
-    white-space: nowrap;
-    width: 100%;
 }
 
 /* each individual text field's scroll rules */
@@ -371,12 +438,16 @@ body {
         transform: translateX(0%);
     }
     15% {
-        /* stays there for 10% of the duration */
+        /* stays there for 15% of the duration */
         transform: translateX(0%);
     }
+    85% {
+        /* moves to a variable-defined location */
+        transform: translateX(var(--titleShift));
+    }
     100% {
-        /* moves to 100% of the total width to the left (so the full string can display, but doesn't fully go away */
-        transform: translateX(-100%);
+        /* stays there for 15% of the duration */
+        transform: translateX(var(--titleShift));
     }
 }
 
@@ -387,12 +458,16 @@ body {
         transform: translateX(0%);
     }
     15% {
-        /* stays there for 10% of the duration */
+        /* stays there for 15% of the duration */
         transform: translateX(0%);
     }
+    85% {
+        /* moves to a variable-defined location */
+        transform: translateX(var(--artistShift));
+    }
     100% {
-        /* moves to 80% of the total width to the left (so the full string can display, but doesn't fully go away */
-        transform: translateX(-40%);
+        /* stays there for 15% of the duration */
+        transform: translateX(var(--artistShift));
     }
 }
 
@@ -403,12 +478,16 @@ body {
         transform: translateX(0%);
     }
     15% {
-        /* stays there for 10% of the duration */
+        /* stays there for 15% of the duration */
         transform: translateX(0%);
     }
+    85% {
+        /* moves to a variable-defined location */
+        transform: translateX(var(--albumShift));
+    }
     100% {
-        /* moves to 60% of the total width to the left (so the full string can display, but doesn't fully go away */
-        transform: translateX(-40%);
+        /* stays there for 15% of the duration */
+        transform: translateX(var(--albumShift));
     }
 }
 
@@ -421,19 +500,66 @@ body {
 function checkTextSize(element) {
     // makes variables (constants) from the passed elements
     const elementWidth = element.scrollWidth;
-    const parentWidth = element.parentElement.offsetWidth;
+    const parentWidth = maxInfoSize;
+
+    //console.log(element, " width: ", elementWidth);
+    //console.log("Player width: ", playerWidthRaw)
+    //console.log("Title - info = ", titleDelta)
+
+    // stores the difference between the element and the player widths (integer)
+    const elementDelta = (elementWidth - maxInfoSize);
+
+    // stores the % the element should move (delta/width = ratio * 100 = %)
+    const shiftAmount = ((elementDelta / elementWidth) * (-100));
+
+    //console.log("This is the amount to move: ", shiftAmount)
+    
 
     // checks the width of the passed element against the "parent element" (the element that stores the passed element)
     if (elementWidth > parentWidth) {
         // if the element is wider, checks if the field already is scrolling
-        if (!element.classList.contains("scrolling")){
+        if (!element.classList.contains("scrolling")) {
             // enables scrolling
             element.classList.add("scrolling");
         }
-    } else {
+        // if the selected element is the title
+        if (element === titleElement) {
+        document.documentElement.style.setProperty("--titleShift", shiftAmount + "%");
+        }
+        // if the selected element is the artist
+        if (element === artistElement) {
+        document.documentElement.style.setProperty("--artistShift", shiftAmount + "%");
+        }
+        // if the selected element is the album
+        if (element === albumElement) {
+        document.documentElement.style.setProperty("--albumShift", shiftAmount + "%");
+        }
+    } 
+    // if the element selected is NOT wider than the "parent"
+    else {
         // if it's not wider, disables it
         element.classList.remove("scrolling");
+
+        // if the selected element is the title
+        if (element === titleElement) {
+        document.documentElement.style.setProperty("--titleShift", 0 + "%");
+        }
+        // if the selected element is the artist
+        if (element === artistElement) {
+        document.documentElement.style.setProperty("--artistShift", 0 + "%");
+        }
+        // if the selected element is the album
+        if (element === albumElement) {
+        document.documentElement.style.setProperty("--albumShift", 0 + "%");
+        }
     }
+
+
+
+
+
+
+
 }
 
 // seconds to timers
@@ -473,6 +599,11 @@ function progressAnimation() {
             currentProgress += elapsed;
             // sets the temp variable to match
             tempProgress = currentProgress;
+        }
+        if (trackChanged) {
+            // if the track changes, sets both timer variables to 0
+            currentProgress = 0
+            tempProgress = 0
         }
         // checks if the song's timer has run out, enforces a cap to the timer
         if (currentProgress > duration) {

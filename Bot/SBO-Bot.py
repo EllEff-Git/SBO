@@ -1,6 +1,6 @@
-import configparser, os, sys, threading
+import configparser, os, sys, threading, random
 # Required for basic function and getting the config options for bot
-import asyncio, asqlite, socket
+import asyncio, asqlite, socket, aiohttp
 # Required to connect to the bot
 import twitchio, logging
 # Required for the bot to function
@@ -22,11 +22,26 @@ if TYPE_CHECKING:
 
 
 
-SBO_Bot_ver = "v0.3.08.2239"
+SBO_Bot_ver = "v0.3.09.0400"
 """The SBO Bot version (y.m.dd.hhmm)"""
 
 
-LOGGER: logging.Logger = logging.getLogger("Bot")
+
+logFormat = "%(message)s"
+# changes the format from "[systemtime] [TYPE] message" to just "message"
+
+if not logging.getLogger("Bot").hasHandlers():
+    # checks if the bot logger has handlers (well, if it doesn't)
+    logging.basicConfig(level=logging.INFO, format=logFormat)
+    # sets up a basic config with the logging level and format
+
+logging.getLogger("twitchio").setLevel(logging.WARNING)
+# sets TwitchIO to only print if it has a warning or higher (otherwise it spams)
+
+logging.getLogger("twitchio.client").setLevel(logging.ERROR)
+# sets the TwitchIO Client to only print on error or higher (there's a couple irrelevant warnings)
+
+LOGGER = logging.getLogger("Bot")
 # starts the consoler logger
 
 
@@ -43,6 +58,8 @@ else:
 print(f"Starting SBO Twitch Bot {SBO_Bot_ver}", flush=True)
 # quick user update on status
 
+conduitPath = os.path.join(directory, "conduit.txt")
+"""The path to conduit.txt (SBO/Bot/conduit.txt)"""
 
 sbotxtPath = os.path.join(directory, "..", "WS", "sbo.txt")
 """The path to sbo.txt (SBO/WS/sbo.txt)"""
@@ -65,28 +82,29 @@ playbackControl = Config.getboolean("Twitch-Bot", "enable_Playback_Control")
 allowSubControl = Config.getboolean("Twitch-Bot", "allow_Subscriber_Control")
 """Whether to allow subscribers to control playback (boolean)"""
 
-bot_Client_ID = Config.get("Twitch-Bot", "twitch_Client_ID")
+bot_Client_ID = Config.get("Twitch-Bot", "dev_Client_ID")
 """The Twitch Client ID from config"""
-bot_Client_Secret = Config.get("Twitch-Bot", "twitch_Client_Secret")
+bot_Client_Secret = Config.get("Twitch-Bot", "dev_Client_Secret")
 """The Twitch Client Secret from config"""
 
 ttvName = Config.get("Twitch-Bot", "twitch_Username")
 """The name of the channel whose chat the bot connects to"""
-botName = "esbeohBot"
-"""The name of the bot (SBO Bot)"""
-botID = "1455638728"
-"""The ID of the bot"""
+botName = Config.get("Twitch-Bot", "bot_Name")
+"""The name of the bot"""
 
 missingID = False
 """A boolean to check if the channel ID exists"""
-
 try:
     # tries to find the twitch ID from config
     channelID = Config.get("Twitch-Bot", "twitch_ID")
     """The ID of the channel whose chat the bot connects to"""
+    botID = Config.get("Twitch-Bot", "bot_ID")
+    """The ID of the bot"""
+    # stores the variables if they're set
 except:
-    # if the ID is missing, sets the flag to true
+    # if one of the IDs is missing, sets the flag to true
     missingID = True
+    # this will trip the check at the bottom and stop the program
 
 
 
@@ -223,13 +241,77 @@ class Bot(commands.AutoBot):
             owner_id = channelID,
             prefix = commandPrefix,
             subscriptions = subs,
-            force_subscribe = True,
+            force_subscribe = True
         )
         # sets up the bot with the correct permissions and IDs
+        self.channelLive = False
+        # stores the channel live status (False by default)
+        self.botName = botName
+        # stores the botname as a class variable (used for a print)
+
+### Live Check ###
+
+    async def liveCheck(self, channelID: str) -> bool:
+        # checks if the channel is live (shouldn't be able to use playback commands if offline)
+        channelURL = f"https://api.twitch.tv/helix/streams?user_login={channelID}"
+        # creates a url for the channel in question
+        urlHeader = {
+            "Client-ID": bot_Client_ID
+        }
+        # constructs the header with the bot client ID
+
+        async with aiohttp.ClientSession() as session:
+            # starts an aio client to connect to Twitch API
+            async with session.get(channelURL, headers=urlHeader) as reply:
+                # queries the channel ID with header, stores response as "reply"
+                data = await reply.json()
+                # takes the data from a json file that's returned
+                if "data" in data and data["data"]:
+                    # if "data" key is found and isn't empty (means the stream is live)
+                    return True
+                    # returns true, which sets the boolean for live to true
+                else:
+                    # if data key doesn't exist or is empty
+                    return False
+                    # returns false, which keeps the boolean for live false
+
+### Check Status of Live Check ###
+
+    async def checkLiveCheck(self):
+        # runs liveCheck every minute to see if the channel has started stream
+        logged = False
+        # sets a boolean to check if the status has been logged already
+        while True:
+            # while program is running
+            channelLive = await self.liveCheck(self.owner_id)
+            # sets the boolean based on the liveCheck result
+            if channelLive != self.channelLive:
+                # if the local and class booleans don't match
+                self.channelLive = channelLive
+                # ensures they do
+                if channelLive:
+                    # if the channel is live
+                    if not logged:
+                        # if the live status hasn't already been logged once
+                        LOGGER.info(f"{ttvName} is now live!")
+                        # prints a live message
+                        logged = True
+                        # changes boolean to True to prevent constant logging
+                else:
+                    # if the channel isn't live
+                    logged = False
+                    # changes/ensures boolean is False
+
+            await asyncio.sleep(60)
+            # sleeps for a minute
+
+### Command Setup ###
 
     async def setup_hook(self) -> None:
         # adds the component that adds commands
-        await self.add_component(MyComponent(self))
+        await self.add_component(CommandComponent(self))
+
+### Auth ###
 
     async def event_oauth_authorized(self, payload: twitchio.authentication.UserTokenPayload) -> None:
         await self.add_token(payload.access_token, payload.refresh_token)
@@ -245,12 +327,16 @@ class Bot(commands.AutoBot):
             # closes
 
         subs: list[eventsub.SubscriptionPayload] = [
-            eventsub.ChatMessageSubscription(broadcaster_user_id=payload.user_id, user_id=self.bot_id),
+            eventsub.ChatMessageSubscription(
+                broadcaster_user_id = payload.user_id, 
+                user_id = self.bot_id)
         ]
         # what to "subscribe" to (listen to)
         resp: twitchio.MultiSubscribePayload = await self.multi_subscribe(subs)
         if resp.errors:
             LOGGER.error("Failed to subscribe to: %r, for user: %s", resp.errors, payload.user_id)
+
+### Token Storage ###
 
     async def add_token(self, token: str, refresh: str) -> twitchio.authentication.ValidateTokenPayload:
         # calls super() to get required permissions and such
@@ -271,8 +357,13 @@ class Bot(commands.AutoBot):
 
         return resp
 
+### Ready Console Log ### 
+
     async def event_ready(self) -> None:
-        LOGGER.error(f"Successfully logged in as: esbeohBot, {self.bot_id}")
+        LOGGER.info(f"Successfully logged in as {self.botName}")
+        # prints the login message to console
+        asyncio.create_task(self.checkLiveCheck())
+        # creates a "task" to run checkLiveCheck
 
 
 
@@ -280,42 +371,45 @@ class Bot(commands.AutoBot):
 
 
 
-class MyComponent(commands.Component):
-    # An example of a Component with some simple commands and listeners
-    # You can use Components within modules for a more organized codebase and hot-reloading.
+class CommandComponent(commands.Component):
+    """Class/component that stores all the commands"""
 
+### Init ###
 
     def __init__(self, bot: Bot) -> None:
-        # Passing args is not required...
-        # We pass bot here as an example...
         self.bot = bot
+        # passes the bot class
+        super().__init__()
 
 ### Listener ###
 
     @commands.Component.listener()
     async def event_message(self, payload: twitchio.ChatMessage) -> None:
-        print(f"{payload.chatter.name}: {payload.text}")
+        """Message grabber"""
 
 ### Playlist ###
 
     @commands.command()
+    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
     async def playlist(self, context: commands.Context) -> None:
         """!playlist"""
 
-        sbo = getData()
-        # calls the data grabber to get the package (dictionary)
-        playlist = sbo.get("Playlist URL")
-        # gets the playlist URL from the dictionary 
+        if self.bot.channelLive:
+        # checks if the channel is live first
+            sbo = getData()
+            # calls the data grabber to get the package (dictionary)
+            playlist = sbo.get("Playlist URL")
+            # gets the playlist URL from the dictionary 
 
-        if playlist == "No playlist":
-            # if the playlist isn't set (SBO sets it to this if no playlist is active)
-            await context.reply(f"{ttvName} is not currently listening to a playlist")
-            # sends a playlist-less message
+            if playlist == "No playlist":
+                # if the playlist isn't set (SBO sets it to this if no playlist is active)
+                await context.reply(f"{ttvName} is not currently listening to a playlist")
+                # sends a playlist-less message
 
-        else:
-            # if the playlist return is anything else
-            await context.reply(f"Current playlist: {playlist}")
-            # sends a message with the playlist URL
+            else:
+                # if the playlist return is anything else
+                await context.reply(f"Current playlist: {playlist}")
+                # sends a message with the playlist URL
 
 ### Song ###
 
@@ -324,23 +418,25 @@ class MyComponent(commands.Component):
     async def track(self, context: commands.Context) -> None:
         """!track and !song"""
 
-        sbo = getData()
-        # calls the data grabber to get the package (dictionary)
-        track = sbo.get("Song Name")
-        # gets the track from the dictionary
-        artist = sbo.get("Artist Name")
-        # gets the artist name from the dictionary
-        trackURL = sbo.get("Spotify URL")
-        # gets the track URL from the dictionary
-        
-        if trackURL == "A local song":
-            # if the song is local (SBO sets it to this if a local song is detected)
-            await context.reply(f"{ttvName} is listening to a locally stored song")
-            # sends a local song message
-        else:
-            # if the song return is anything else
-            await context.reply(f"Current song: {track} by {artist}. {trackURL}")
-            # sends a message with the song URL
+        if self.bot.channelLive:
+        # checks if the channel is live first
+            sbo = getData()
+            # calls the data grabber to get the package (dictionary)
+            track = sbo.get("Song Name")
+            # gets the track from the dictionary
+            artist = sbo.get("Artist Name")
+            # gets the artist name from the dictionary
+            trackURL = sbo.get("Spotify URL")
+            # gets the track URL from the dictionary
+            
+            if trackURL == "A local song":
+                # if the song is local (SBO sets it to this if a local song is detected)
+                await context.reply(f"{ttvName} is listening to a locally stored song")
+                # sends a local song message
+            else:
+                # if the song return is anything else
+                await context.reply(f"Current song: {track} by {artist}. {trackURL}")
+                # sends a message with the song URL
 
 ### Skip ###
 
@@ -349,14 +445,16 @@ class MyComponent(commands.Component):
     async def skip(self, context: commands.Context) -> None:
         """!skip"""
 
-        if isCoolChatter()(context):
-            # checks if the permissions are met
-            dataPasser("skip", "")
-            # calls the dataPasser function
-            await context.reply("Skipped")
-        
-        else:
-            print("No permission")
+        if self.bot.channelLive:
+        # checks if the channel is live first
+            if isCoolChatter()(context):
+                # checks if the permissions are met
+                dataPasser("skip", "")
+                # calls the dataPasser function
+                await context.reply("Skipped")
+            
+            else:
+                print("No permission")
 
 ### Pause ###
 
@@ -365,12 +463,14 @@ class MyComponent(commands.Component):
     async def pause(self, context: commands.Context) -> None:
         """!pause"""
 
-        if isCoolChatter()(context):
-            dataPasser("pause", "")
-            # calls the dataPasser function
+        if self.bot.channelLive:
+        # checks if the channel is live first
+            if isCoolChatter()(context):
+                dataPasser("pause", "")
+                # calls the dataPasser function
 
-            await context.reply(f"Paused")
-            # replies to user
+                await context.reply(f"Paused")
+                # replies to user
 
 ### Resume ###
 
@@ -379,14 +479,15 @@ class MyComponent(commands.Component):
     async def resume(self, context: commands.Context) -> None:
         """!resume"""
 
+        if self.bot.channelLive:
+        # checks if the channel is live first
+            if isCoolChatter()(context):
+                # checks if the permissions are met
+                dataPasser("resume", "")
+                # calls the dataPasser function
 
-        if isCoolChatter()(context):
-            # checks if the permissions are met
-            dataPasser("resume", "")
-            # calls the dataPasser function
-
-            await context.reply(f"Resumed")
-            # replies to user
+                await context.reply(f"Resumed")
+                # replies to user
 
 ### Previous ###
 
@@ -395,14 +496,15 @@ class MyComponent(commands.Component):
     async def previous(self, context: commands.Context) -> None:
         """!previous"""
 
+        if self.bot.channelLive:
+        # checks if the channel is live first
+            if isCoolChatter()(context):
+                # checks if the permissions are met
+                dataPasser("previous", "")
+                # calls the dataPasser function
 
-        if isCoolChatter()(context):
-            # checks if the permissions are met
-            dataPasser("previous", "")
-            # calls the dataPasser function
-
-            await context.reply(f"Went back")
-            # replies to user
+                await context.reply(f"Went back")
+                # replies to user
 
 ### Queue ###
 
@@ -411,24 +513,26 @@ class MyComponent(commands.Component):
     async def queue(self, context: commands.Context) -> None:
         """!queue"""
 
-        if isCoolChatter()(context):
-            # checks if the permissions are met
-            fullMsg = context.content
-            # gets the full message from the contents
-            try:
-                cmd, songLink = fullMsg.split(" ", 1)
-                # splits the command, stores the link for the song as songLink
+        if self.bot.channelLive:
+        # checks if the channel is live first
+            if isCoolChatter()(context):
+                # checks if the permissions are met
+                fullMsg = context.content
+                # gets the full message from the contents
+                try:
+                    cmd, songLink = fullMsg.split(" ", 1)
+                    # splits the command, stores the link for the song as songLink
 
-                dataPasser("queue", songLink)
-                # calls the dataPasser function with the link
+                    dataPasser("queue", songLink)
+                    # calls the dataPasser function with the link
 
-                await context.reply(f"Queued song")
-                # replies to user
+                    await context.reply(f"Queued song")
+                    # replies to user
 
-            except:
-                # if the command was entered incorrectly
-                await context.reply(f"Add a valid Spotify link after !queue, please")
-                # replies to user 
+                except:
+                    # if the command was entered incorrectly
+                    await context.reply(f"Add a valid Spotify link after !queue, please")
+                    # replies to user 
 
 
 ### SBO ###
@@ -441,11 +545,19 @@ class MyComponent(commands.Component):
         await context.reply(f"The SBO Bot (esbeohBot) is a Twitch bot made by LP, currently on {SBO_Bot_ver}")
         # replies with the SBO details
 
+### Unfound Command ###
 
+    @commands.Component.listener()
+    async def unfound(self, context: commands.Context, error: Exception) -> None:
+        """Handles commands that don't exist (if the message has the right prefix, wrong cmd)"""
+        if isinstance(error, commands.CommandNotFound):
+            # if the command returns a "command not found"
+            return
+            # doesn't return anything
+        LOGGER.error(f"Error handling {context.command}: {error}")
+        # if it's something else
 
 ### Database / Token Storage ###
-
-
 
 async def setup_database(db: asqlite.Pool) -> tuple[list[tuple[str, str]], list[eventsub.SubscriptionPayload]]:
     """Function to setup the database from given (db)"""
@@ -488,7 +600,7 @@ async def setup_database(db: asqlite.Pool) -> tuple[list[tuple[str, str]], list[
 def logWriter() -> None:
     """Logging function"""
 
-    twitchio.utils.setup_logging(level=logging.ERROR)
+    twitchio.utils.setup_logging(level=logging.INFO)
     # sets up a console log writer (currently set to "ERROR" to avoid massive print)
 
     async def runner() -> None:
@@ -519,12 +631,18 @@ def logWriter() -> None:
 
 
 if missingID:
-    # checks if both the botID and channelID exist
+    # checks if the channelID exists (required for connection)
         print(f"ChannelID not found, please enter it into the config file")
         # user inform
         input("Press enter to exit")
         raise SystemExit
 
+if not ttvName:
+    # checks if the channel name exists (required for conduit/connection)
+        print(f"Channel name not found, please enter it into the config file")
+        # user inform
+        input("Press enter to exit")
+        raise SystemExit
 
 if playbackControl:
     # if the Twitch chat playback is enabled

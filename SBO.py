@@ -15,7 +15,7 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.08.1123"
+SBO_ver = "v0.3.09.0444"
 """The SBO program version (y.m.dd.hhmm)"""
 
 
@@ -206,7 +206,7 @@ def authPlayback():
 
                 if isinstance(error, requests.exceptions.ConnectionError):
                     # if the error is a connection error (token expired)
-                    print(f"{Time()}[INFO]: Refreshing Spotify token")
+                    print(f"\n{Time()}[INFO]: Refreshing Spotify token")
                     # doesn't sleep because this is a token error and should get fixed nearly instantly
                     # expected to print just about every 3600 seconds (1h)
                     tokenRefresh = True
@@ -233,7 +233,7 @@ def authPlayback():
 
 
 def webHostListener():
-    """Redis message listener"""
+    """Websocket message host/listener"""
 
     client_socket, client_address = webHost.accept()
     # waits for a client connection
@@ -307,7 +307,7 @@ def queue(link):
         main.add_to_queue(link)
         print("Song added to queue")
     except:
-        print("Invalid format, try again")
+        print("Invalid link format")
 
 
 
@@ -359,6 +359,7 @@ def song():
         # creates an empty list for strings to get added into as the loop progresses 
 
         csArtistString = []
+        # creates an empty list for artists to get added into as the loop progresses
 
         csFull = currentInfo
         # gets a huge dictionary containing all the information about current song
@@ -528,6 +529,7 @@ def song():
                     f"UNIX Start = {str(csUnixStart)}\n"
                     f"UNIX End = {str(csUnixEnd)}\n"
                     f"Pause State = {str(pauseState)}\n"
+                    f"Track ID = {str(trackCounter)}" 
                     )
         # merges all the song information together, split by newlines
 
@@ -571,8 +573,10 @@ def looper():
         # grabs the URI of the song, stores it
         songName = (info.get("item").get("name"))
         # stores name for display purposes
-        songProg = ((info.get("progress_ms")) / 1000)
+        songProg = int((info.get("progress_ms")) / 1000)
         # grabs the progress of the song at the pull time (ms/1000 = seconds)
+        songStart = int(time.time() - songProg)
+        # stores the start time of the song by taking current time and subtracting progress
         playing = info.get("is_playing")
         # checks the pause state (True if playing, False if not)
 
@@ -580,21 +584,21 @@ def looper():
             # when the program first starts, the currentURI will be "None", this updates it
             currentURI = songURI
             # sets the current song to match 
-            currentProg = songProg
-            # updates the current progress
+            storedStart = songStart
+            # updates the timestamp to match
             trackCounter += 1
             # adds 1 to counter
             songEvent.set()
             # since this only runs when the program first starts, sets an event immediately to song, to refresh data
             print(f"{Time()}[SONG]: First song: {songName}, has been successfully processed\n")
 
-        songDur = ((info.get("item")).get("duration_ms")/1000)
+        songDur = int((info.get("item")).get("duration_ms")/1000)
         # grabs both the current time and length of the song (in seconds)
-        songLeft = (songDur-songProg)
+        songLeft = (songDur - songProg)
         # calculates the time left on the song
 
-        if (currentURI != songURI) or (songProg < currentProg) or (pauseUpdated and playing):
-        # if there's a song change (if the URI or there's somehow less time left than previously) or if the pause has been triggered
+        if (currentURI != songURI) or ((songStart - 5) > storedStart) or (pauseUpdated and playing):
+        # if there's a song change (if the URI has changed or the start timestamp is higher than the stored timestamp) or if the pause has been triggered
 
             if not pauseUpdated:
                 # if console updates are enabled and this change wasn't triggered by a pause
@@ -606,7 +610,7 @@ def looper():
 
             currentURI = songURI
             # changes the internal variable to match new song
-            currentProg = songProg
+            storedStart = songStart
             # changes timestamp variable to match
             songEvent.set()
             # sets an event to make song() update the text file
@@ -651,6 +655,7 @@ def looper():
         # sleeps for the determined time
 
 
+
 ### Load Commands ###
 
 
@@ -666,6 +671,7 @@ sbowsThread = threading.Thread(target = runSBOws)
 sbowsThread.start()
 # starts the SBO-WS thread
 
+
 if runBot:
     # if the config option to have SBO run the bot program is enabled
     botThread = threading.Thread(target = runSBOBot)
@@ -673,12 +679,6 @@ if runBot:
     botThread.start()
     # starts the SBO-Bot thread
 
-if enableBot:
-    # if the config option to enable the bot is enabled
-    redisThread = threading.Thread(target = webHostListener)
-    # creates a thread for the redis connection to run in - this way it won't stop the main process
-    redisThread.start()
-    # starts the redis thread
 
 looper()
 # runs the looper, which manages the song refresh cycles
