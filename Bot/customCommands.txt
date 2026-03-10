@@ -1,0 +1,77 @@
+Hello!
+
+Here's the basic rundown on how to add new commands, with and without permission checking:
+    - There may be other methods (like an @commands.isX check), but this is how the program was written (you can tell me how dumb I am later)
+
+
+
+Without permissions:
+
+- Scroll down to the "CommandComponent" class and add a new "@commands.command"
+- You can give it custom cooldowns via "@commands.cooldown" under the command declaration, but it's not needed
+- Then, define the command by doing "async def" followed by the command name
+- If you want the command to have an alias, add a "@commands.command(aliases=["aliasHere"])"
+- Otherwise, add the logic for your command (either copy what's there or head to https://twitchio.dev/en/latest/ to see what all you can do)
+- That's it. The command will just work now
+- It won't, however, check for use permissions - you'll need the permission check part for that
+
+
+
+Permission Check:
+
+- Basically, this allows you to automatically check if the user who typed the command is allowed to use it
+- For this, you'll first make your command as you do the without permission checking
+
+- After that, you'll need to add a check inside the command; "if isCoolChatter()", followed by 2 parameters in a second bracket:
+    - The first bracket is the context (the message from chat), and the second is a keyword the program uses to check permissions
+    - You can pick the keyword yourself, but make sure it has the permissions attached you want (either copy an existing key, like "song", or make a new one)
+
+- Near the top of the program, you'll find a big block, under "Command Configuration"
+- There, each command's configuration is pulled from the "commandConfig.ini" file at the start of the program
+- Here you can also add your own, by just following the trend;
+    - Each command has 4 types of configuration options:
+        - enableCommand, which is a boolean (True/False) that dictates whether the command is enabled
+        - command_CD_chatter, which is the cooldown, in seconds, that each user has when using that command
+        - command_CD_channel, which is the cooldown, in seconds, that each *channel* has when *anyone* uses that command
+        - commandLevel, which indicates what the required status in chat is to use the command (chatter, sub, mod, vip, etc)
+    - You can either use another command's already existing variables in your own command, or add your own
+        - If you do add your own, make sure to add them into the commandConfig as well, or just make the variables set inside the program
+
+- If set up correctly, the program will, at start, give all the variables values
+    - The commandLevel is converted from a string into a number, and pushed into "commandLevelList" in order
+    - This number is then pushed to "permissionMap", where it'll be accessed for permission checks
+        - Do note that it's only pushed in, if the commandLevel is added to "commandLevels" list,
+        - and the command is entered into permissionMap with "keyword": commandLevelList[index], where the index is the index of your command inside commandLevels
+            - basically, if you add the command *last* (bottom) to commandLevels, it'll have the highest index, so just add 1 to the previously highest in permissionMap
+
+- If you now head to the "isCoolChatter()" command, you'll find it runs through a check to see what the message author (chatter)'s permission level is
+- It then compares it against the value required by your command (as set by commandLevel), and returns True or False based on which is higher
+
+- This True/False value is then passed back to your command inside the "commandComponent" class
+- Based on that boolean value, you can choose what type of reply you'll send via "context.reply()" or "context.send()"
+    - Note that await is used due to the commands having to wait for other functions to run first, so they wait for functions to finish before replying
+
+
+
+Spotify control:
+
+- If you also want the command to control Spotify, you'll have to first add that into your command;
+    - simply add a function call to "dataPasser" with the command as the first parameter, and nothing or a spotify URI/URL as the second
+
+- Then head to dataPasser's definition and add a command check
+    - For example, if you want to send a command for "explode", just add "elif command == "explode":"
+        - Then follow this up by defining what message you'd like to send to SBO
+        - For example, there's "msg = Previous", followed by "webClient.send(msg.encode())"
+        - This sends SBO the message "Previous" encoded, which it then decodes upon receiving
+
+- Now, you'll head to SBO.py
+- Inside, find the "webHostListener()" function
+    - Here, you'll add your own message call
+    - simply add "elif message == (yourmessage):" and then tell it what to do
+
+- That's it, now the Bot can read the twitch chat, wait for your command to be entered, check if the sender has permissions and then perform its logic
+    - Logic being, either it responds with something directly from the bot program, or it tells SBO to make Spotify do something (or other)
+
+- That should be the full rundown on how to add custom commands to this bot
+    - Should any questions arise, don't hesitate to reach out :)
+    - My Discord (best way to reach me) can be found at the bottom of any of my guides at https://elleffnotelf.com/guides/

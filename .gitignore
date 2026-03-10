@@ -6,6 +6,8 @@ WS/*
 !WS/SBO-WS.py
 Bot/*
 !Bot/SBO-Bot.py
+!Bot/commandConfig.ini
+!Bot/customCommands.txt
 todo.txt
 SBO.ico
 SBO.xcf

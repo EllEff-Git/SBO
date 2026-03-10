@@ -15,7 +15,7 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.10.0021"
+SBO_ver = "v0.3.10.0910"
 """The SBO program version (y.m.dd.hhmm)"""
 
 
@@ -50,7 +50,7 @@ sboBotDir = os.path.join(directory, "Bot")
 sboBotPath = os.path.join(sboBotDir, sboBotExe)
 """The full path to the SBO-Bot.exe (SBO/Bot/SBO-Bot.exe)"""
 
-
+### Time Function (Console) ###
 
 def Time():
     """Function that returns the current time, formatted"""
@@ -65,7 +65,6 @@ print(f"{Time()}[START]: Starting SBO {SBO_ver}\n")
 
 # Event Thread #
 
-
 songEvent = threading.Event()
 """Creates an empty threading event list for song"""
 
@@ -74,7 +73,6 @@ spotifyLock = threading.Lock()
 
 
 ### Config ###
-
 
 Config = configparser.ConfigParser(comment_prefixes = ["/", "#"], allow_no_value = True)
 """The configuration file reader"""
@@ -144,9 +142,6 @@ main = spotipy.Spotify(auth_manager = authorisation, requests_session = sessionI
 ### Variables ###
 
 
-pauseStart = None
-"""Makes a starter variable that stores a timestamp when a pause occurs"""
-
 currentURI = None
 """Stores the currently playing track's URI"""
 
@@ -179,6 +174,9 @@ def authPlayback():
 
         tokenRefresh = False
         # a boolean to determine whether to print the token refresh or reconnect text
+
+        internalError = False
+        # a boolean to determine if the error was Spotify's internal error (changes final print)
 
         for attempt in range(3):
             # tries a max of 3 times to get Spotify data (typically succeeds 1st try, so if it doesn't work in 3, there's a bigger issue)
@@ -213,24 +211,44 @@ def authPlayback():
                     # expected to print just about every 3600 seconds (1h)
                     tokenRefresh = True
                     # sets the tokenRefresh mode to true so it prints the token text on success
+                    internalError = False
+                    # sets the flag to false
+
+                elif isinstance(error, SpotifyException) and error.http_status == 500:
+                    # if the error is 500 (internal error fail)
+                    print(f"{Time()}[ERROR]: Spotify internal error (Code 500). Attempting to reconnect ({attempt+1}/3)]")
+                    # prints an error message
+                    internalError = True
+                    # should never happen, but very very rarely does
 
                 else:
                     # if the error is anything else
                     print(f"{Time()}[ERROR]: Spotify errored due to {error}.\n{Time()}[INFO]: Attempting to reconnect ({attempt+1}/3)")
+                    internalError = False
+                    # sets the flag to false
 
-                if attempt == 2:
+                ### Too Many Errors ###
+
+                if attempt == 2 and not internalError:
                     # if it's the last attempt (range(3) = 0,1,2) and it fails
-                    print(f"{Time()}[CRITICAL]: All attempts to reconnect failed due to {error}\nPlease manually restart SBO. Exiting...")
-                    time.sleep(60)
+                    print(f"{Time()}[CRITICAL]: All attempts to reconnect failed due to {error}\n\nPlease manually restart SBO. Exiting...")
+                    time.sleep(600)
+                    raise SystemExit
+                    # prompts user, then exits
+
+                elif attempt == 2 and internalError:
+                    # if it's the last attempt and fails due to internal error
+                    print(f"{Time()}[CRITICAL]: All attempts to reconnect failed due to Spotify's internal error.\n\nPlease manually restart SBO. Exiting...")
+                    time.sleep(600)
                     raise SystemExit
                     # prompts user, then exits
 
                 time.sleep(3)
-                # waits 3 seconds to give it some time
+                # waits 3 seconds to give it some time between tries
 
 
 
-### Redis Listener ###
+### Web Host / Listener ###
 
 
 
@@ -245,7 +263,7 @@ def webHostListener():
     while True:
         # while the program is running
         rawMessage = client_socket.recv(1024)
-        # grabs any messages sent
+        # grabs any messages sent (1024 bytes, shouldn't use more than a few)
 
         if rawMessage:
             # if there's a message
@@ -273,16 +291,15 @@ def webHostListener():
                 # calls the previous function
 
             elif message.startswith("Queue:"):
-                # if the message has "Queue" in it
+                # if the message starts with "Queue:"
                 x, uri = message.split(" ", 1)
-                # splits the message to first and second halves by the first space (just after Queue: )
+                # splits the message to first and second halves by the first space (just after "Queue: "")
                 queue(uri)
                 # calls the queue function with the URI
 
             else:
                 # if the command isn't recognized
-                print("Unknown command in PtP (DEBUG)")
-
+                print("Unknown command passed via PTP")
 
 
 
@@ -292,29 +309,51 @@ def webHostListener():
 
 def skip():
     """Skips to next song"""
-    main.next_track()
-    print(f"{Time()}[SBOT]: Skipped song")
+    try:
+        main.next_track()
+        print(f"{Time()}[SBOT]: Skipped song")
+        # success log print
+    except:
+        print(f"{Time()}[SBOT]: Couldn't skip song")
+        # print if there's an error
 
 def pause():
     """Pauses playback"""
-    main.pause_playback()
-    print(f"{Time()}[SBOT]: Paused song")
+    try:
+        main.pause_playback()
+        print(f"{Time()}[SBOT]: Paused playback")
+        # success log print
+    except:
+        print(f"{Time()}[SBOT]: Couldn't pause playback")
+        # print if there's an error
 
 def resume():
     """Resumes playback"""
-    main.start_playback()
-    print(f"{Time()}[SBOT]: Resumed")
+    try:
+        main.start_playback()
+        print(f"{Time()}[SBOT]: Resuming playback")
+        # success log print
+    except:
+        print(f"{Time()}[SBOT]: Couldn't resume playback")
+        # print if there's an error
 
 def previous():
-    main.previous_track()
-    print(f"{Time()}[SBOT]: Previous song")
+    try:
+        main.previous_track()
+        print(f"{Time()}[SBOT]: Previous song")
+        # success log print
+    except:
+        print(f"{Time()}[SBOT]: Couldn't go to previous song")
+        # print if there's an error
 
 def queue(link):
     try:
         main.add_to_queue(link)
         print(f"{Time()}[SBOT]: Song added to queue")
+        # success log print
     except:
-        print(f"{Time()}[SBOT]: Invalid link format")
+        print(f"{Time()}[SBOT]: Error adding to queue")
+        # print if there's an error (shouldn't be a type error since SBO-Bot checks type before sending)
 
 
 
@@ -354,7 +393,7 @@ def runSBOBot():
 
 def song():
     """The function that handles all song data gathering and parsing, as well as pushing to C++ via text"""
-    global pauseStart, currentInfo, trackCounter, oldCount
+    global currentInfo, trackCounter, oldCount
     # pulls some global variables to local
 
     while True:
@@ -452,36 +491,17 @@ def song():
 
         csPlayState = bool(csFull.get("is_playing"))
         # grabs the playback state (true/false)
-
-        pauseState = False
-        # defaults the pauseState to false
+        paused = not(csPlayState)
+        # stores the opposite of playstate (if playing, paused = false, if not, paused = true)
 
         if not csPlayState:
             # if the song is paused
 
-            if pauseStart is None:
-                # if there's no set pause time
-                pauseStart = int(time.time() + 1)
-                # sets the pause time to current time
-
-            pauseState = True
-            # sets the pauseState to True
-
             songNameList.append("Paused on:")
             # adds the "paused on" text to list
 
-        elif pauseStart is not None and (trackCounter == oldCount):
-            # if there's a set pause time from before (and the song hasn't changed)
-            pauseDuration = int(time.time() - pauseStart)
-            # calculates the time spent on pause
-            csUnixStart += pauseDuration
-            csUnixEnd += pauseDuration
-            # sets the start and end times to match the time spent paused (by adding the time spent paused)
-            pauseStart = None
-            # resets the pauseStart to None, so it can get checked again
-
         elif trackCounter != oldCount and csPlayState:
-            # checks if the song has changed
+            # checks if the song has changed (and song is playing, this way won't activate on paused songs and cause flashing elements)
 
             oldCount = trackCounter
             # updates the song counter
@@ -494,17 +514,25 @@ def song():
             # grabs the spotify track URL
             csPlaylist = csFull.get("context")
             # stores the list that contains the playlist url
+            csAlbumURLs = csAlbum.get("external_urls")
+            # stores the album urls 
+            ttvAlbumURL = csAlbumURLs.get("spotify")
+            # gets the spotify url 
 
-            if csPlaylist != None:
-                # checks if user is playing a playlist
-                csPlaylistURL = csPlaylist.get("external_urls")
-                # gets *all* the URLs for the playlist
-                csPlaylistURL = csPlaylistURL.get("spotify")
-                # gets only the playlist URL (only one in there, unsure why it's a dictionary but ok Spotify)
-        
         else:
             # if the song is local
             csURL = "A local song"
+            ttvAlbumURL = "A local album"
+
+        if csPlaylist != None:
+            # checks if user is playing a playlist
+            csPlaylistURL = csPlaylist.get("external_urls")
+            # gets *all* the URLs for the playlist
+            csPlaylistURL = csPlaylistURL.get("spotify")
+            # gets only the playlist URL (only one in there, unsure why it's a dictionary but ok Spotify)
+        
+        else:
+            # if there's no playlist
             csPlaylistURL = "No playlist"
 
         songNameList.append(csName)
@@ -530,12 +558,13 @@ def song():
                     f"Song Name = {ttvSongName}\n"
                     f"Artist Name = {ttvArtistName}\n"
                     f"Album Name = {ttvAlbumName}\n"
+                    f"Album URL = {ttvAlbumURL}\n" 
                     f"Spotify URL = {ttvURL}\n"
                     f"Spotify Image = {csCover}\n"
                     f"Playlist URL = {csPlaylistURL}\n"
                     f"UNIX Start = {str(csUnixStart)}\n"
                     f"UNIX End = {str(csUnixEnd)}\n"
-                    f"Pause State = {str(pauseState)}\n"
+                    f"Pause State = {str(paused)}\n"
                     f"Track ID = {str(trackCounter)}" 
                     )
         # merges all the song information together, split by newlines

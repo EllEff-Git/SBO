@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.3.09.0821</title>
+<title>Spotify Overlay v0.3.10.0506</title>
 
 <script>
 
-// initialises last track as null on start
+// initialises (last) track as null on start
 let lastTrackID = null;
 let trackID = null;
 
@@ -32,7 +32,7 @@ let playerWidthRaw, playerHeightRaw = 0;
 
 // waits for the HTML to be fully loaded, then loads the rest
 document.addEventListener("DOMContentLoaded", () => {
-    // sets constants from elements 
+    // updates global constants to match elements 
     player = document.getElementById("player");
     cover = document.getElementById("cover");
     titleElement = document.getElementById("title");
@@ -41,19 +41,20 @@ document.addEventListener("DOMContentLoaded", () => {
     bar = document.getElementById("bar");
     timer = document.getElementById("timer");
 
-    // start the animation function
+    // calls the animation function to start the progress bar
     progressAnimation();
 
-    // grabs the config.json file
+    // grabs the config.json file (sent by SBO-WS.exe during startup)
+    // you can see this if you go to localhost:(httpPort)/config.json (httpPort being the config port)
     fetch("/config.json")
 
-        // loads the config options
+        // loads the config options as Config
         .then(res => res.json())
         .then(Config =>{
 
-        // sets all the variables that the elements use based on config.json
+        // sets all the variables that the elements use based on loaded config.json file
         
-        // stores the player size here first (easier to debug if I don't have to reload application to re-get config)
+        // stores the player size here first (can be directly replaced with a number, easy debug access)
         playerWidthRaw = Config.playerWidth // 500
         // playerHeightRaw is *typically* the boundary to the image size, which is 90% of the height
         playerHeightRaw = Config.playerHeight // 100
@@ -136,13 +137,14 @@ document.addEventListener("DOMContentLoaded", () => {
             trackChanged = false;
         }
 
-        // check for paused state
+        // check for paused state (boolean, true/false)
         isPaused = data.paused;
+
         // adds/removes the paused element type
         if(isPaused) player.classList.add("paused");
         else player.classList.remove("paused");
 
-        // grabs the text contents from the data file and turns into elements
+        // grabs the text contents from the data file and turns into elements (uses "" if not found)
         titleElement.textContent = data.title || "";
         artistElement.textContent = data.artist || "";
         albumElement.textContent = data.album || "";
@@ -160,11 +162,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // grabs the progress and duration (if neither is undefined)
         if(data.progress !== undefined && data.duration !== undefined){
-            // checks if the song is paused
+            // checks to make sure the song isn't paused
             if (!isPaused) {
-                // only updates the fields if the song *isn't* updated
-                currentProgress = data.progress;
-                // has a fallback of 1s to avoid breaking it
+                // only updates the fields if the fields are valid and song is playing (default of 0, in case none is found)
+                currentProgress = data.progress || 0;
+                // sets the duration (default of 1, in case none is found)
                 duration = data.duration || 1;
             }
         }
@@ -203,7 +205,9 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
         <!-- the progress container, houses the progress bar and timer-->
         <div id="progress-container">
+            <!-- the progress bar-->
             <div id="progress"><div id="bar"></div></div>
+            <!-- the progress timer, sets default value -->
             <div id="timer">0:00 / 0:00</div>
         </div>
     </div>
@@ -322,6 +326,7 @@ body, html, #background, #player {
 
 /* the text fields inherit these */
 .text-wrapper {
+    /* sets a lot of positional info to ensure text fields behave */
     display: flex;
     justify-content: flex-start;
     position: relative;
@@ -382,7 +387,7 @@ body, html, #background, #player {
     /* the gap between the bar and timer*/
     gap: 6px;
     margin-top: 4px;
-    /* can't be larger than the info field itself*/
+    /* can't be larger than the info field itself, uses calculated size */
     max-width: var(--maxInfoWidth, 80%);
 }
 
@@ -391,13 +396,14 @@ body, html, #background, #player {
     flex: 1;
     /* sets minimum width */
     min-width: 50px;
+    /* how tall the player should be */
     height: 4px;
     /* the color of the empty part of the bar */
     background: #949494;
     margin-top: 6px;
     /* how rounded the corners are */
     border-radius: 2px;
-    /* border style around the progress bar */
+    /* border style around the progress bar (black gives a good contrast with this background setting */
     border: 1px, solid, #000000;
     overflow: hidden;
     position: relative;
@@ -409,7 +415,9 @@ body, html, #background, #player {
     /* the color of the full part of the bar */
     background: var(--pbcNorm, #1ED760);
     width: 0%;
+    /* adds a tiny transition to smoothe the bar updates */
     transition: width 0.3s linear;
+    /* sets the position */
     position: absolute;
     top: 0;
     left: 0;
@@ -417,20 +425,27 @@ body, html, #background, #player {
 
 /* progress bar (paused) */
 #player.paused #bar {
+    /* sets the color to match the config-set pause color (default color of red if none found/set) */
     background: var(--pbcPause, #FF2C00);
     opacity: 1;
 }
 
 /* the timer/duration on the right */
 #timer {
+    /* sets a font that's just a smidge smaller than album and artist */
     font-size: 13px;
     white-space: nowrap;
     opacity: 0.8;
+    /* color and style are matched with the other support fields (album, artist) */
     color: var(--supportColors, #ffffff);
     font-style: var(--supportStyles);
 }
 
-/* each individual text field's scroll rules */
+/* each individual text field's scroll rules
+    sets the animation rules for keyframes per field
+    timer determines how fast/slow the movement should be, the lower the time, the faster the scroll
+    linear infinite means it keeps doing it, and does so at a steady pace (no ease/acceleration at any point)
+    alternate means once it hits the end, it turns back around and repeats the other way */
 .title.scrolling {
     animation: scrollTitle 18s linear infinite alternate;
 }
@@ -451,6 +466,7 @@ body, html, #background, #player {
     }
     15% {
         /* stays there for 15% of the duration */
+        /* stalls on the left so that the text stays in place for a bit */
         transform: translateX(0%);
     }
     85% {
@@ -459,6 +475,7 @@ body, html, #background, #player {
     }
     100% {
         /* stays there for 15% of the duration */
+        /* stalls on the right so the text is easy to read */
         transform: translateX(var(--titleShift));
     }
 }
@@ -471,6 +488,7 @@ body, html, #background, #player {
     }
     15% {
         /* stays there for 15% of the duration */
+        /* stalls on the left so that the text stays in place for a bit */
         transform: translateX(0%);
     }
     85% {
@@ -479,6 +497,7 @@ body, html, #background, #player {
     }
     100% {
         /* stays there for 15% of the duration */
+        /* stalls on the right so the text is easy to read */
         transform: translateX(var(--artistShift));
     }
 }
@@ -491,6 +510,7 @@ body, html, #background, #player {
     }
     15% {
         /* stays there for 15% of the duration */
+        /* stalls on the left so that the text stays in place for a bit */
         transform: translateX(0%);
     }
     85% {
@@ -499,6 +519,7 @@ body, html, #background, #player {
     }
     100% {
         /* stays there for 15% of the duration */
+        /* stalls on the right so the text is easy to read */
         transform: translateX(var(--albumShift));
     }
 }
@@ -510,69 +531,63 @@ body, html, #background, #player {
 
 // check if any fields exceed the player size (whether they should scroll)
 function checkTextSize(element) {
-    // makes variables (constants) from the passed elements
+
+    // gets the passed element's scroll width (how wide the element is)
     const elementWidth = element.scrollWidth;
+    // gets the passed element's parent element's width (should be #info for title, artist and album)
     const parentWidth = maxInfoSize;
 
-    //console.log(element, " width: ", elementWidth);
-    //console.log("Player width: ", playerWidthRaw)
-    //console.log("Title - info = ", titleDelta)
-
     // stores the difference between the element and the player widths (integer)
+    // if this is > 0, that means the text field is wider than the info field
     const elementDelta = (elementWidth - maxInfoSize);
 
-    // stores the % the element should move (delta/width = ratio * 100 = %)
+    // stores the % the element should move (delta/width = ratio * 100 = %, and since it should move L -> R, it's negative)
     const shiftAmount = ((elementDelta / elementWidth) * (-100));
 
     //console.log("This is the amount to move: ", shiftAmount)
     
 
     // checks the width of the passed element against the "parent element" (the element that stores the passed element)
+    // for all the elements currently contained, it's the 
     if (elementWidth > parentWidth) {
+
         // if the element is wider, checks if the field already is scrolling
         if (!element.classList.contains("scrolling")) {
             // enables scrolling
             element.classList.add("scrolling");
         }
-        // if the selected element is the title
+        // if the selected element is the title, sets its shift percentage
         if (element === titleElement) {
         document.documentElement.style.setProperty("--titleShift", shiftAmount + "%");
         }
-        // if the selected element is the artist
+        // if the selected element is the artist, sets its shift percentage
         if (element === artistElement) {
         document.documentElement.style.setProperty("--artistShift", shiftAmount + "%");
         }
-        // if the selected element is the album
+        // if the selected element is the album, sets its shift percentage
         if (element === albumElement) {
         document.documentElement.style.setProperty("--albumShift", shiftAmount + "%");
         }
     } 
-    // if the element selected is NOT wider than the "parent"
+    // if the element selected is NOT wider than the "parent" - sets the titleShift to 0% (won't move)
     else {
         // if it's not wider, disables it
         element.classList.remove("scrolling");
 
-        // if the selected element is the title
+        // if the selected element is the title, sets its shift percentage
         if (element === titleElement) {
         document.documentElement.style.setProperty("--titleShift", 0 + "%");
         }
-        // if the selected element is the artist
+        // if the selected element is the artist, sets its shift percentage
         if (element === artistElement) {
         document.documentElement.style.setProperty("--artistShift", 0 + "%");
         }
-        // if the selected element is the album
+        // if the selected element is the album, sets its shift percentage
         if (element === albumElement) {
         document.documentElement.style.setProperty("--albumShift", 0 + "%");
         }
     }
-
-
-
-
-
-
-
-}
+} // checkTextSize close
 
 // seconds to timers
 function timeFormat(sec) {
@@ -586,20 +601,25 @@ function timeFormat(sec) {
 
 // progress bar animation
 function progressAnimation() {
-    // checks if the progress bar and timer elements are ready
+
+    // checks if the progress bar and timer elements are ready (if they are both defined)
     if (!bar || !timer) {
-        // requests animation if yes
+        // if they're not, calls itself again
         requestAnimationFrame(progressAnimation);
+        // doesn't progress the function on this call
         return;
     }
-    // stores the current time (-2 to help with some offset)
-    const now = (Date.now()-2);
+
+    // stores the current time (-2 to help with some offset induced by Spotify API and/or SBO -> SBO-WS -> HTML connection delay)
+    // if this number is set too close to realtime, songs would end here and on Spotify at the same time
+    // this would just look odd, as the overlay waits for new data to be sent via SBO and SBO-WS
+    const now = (Date.now() - 2);
     // calculates how long it's been since last update, turns into seconds
     const elapsed = (now - lastUpdateTime) / 1000;
     // sets the last update to current time
     lastUpdateTime = now;
 
-    // checks if the player is paused (more accurately, if it's not)
+    // makes sure the player isn't paused - skips all calculation if the playback is paused
     if (!isPaused) {
         
         // adds the elapsed time to a temp
@@ -612,6 +632,7 @@ function progressAnimation() {
             // sets the temp variable to match
             tempProgress = currentProgress;
         }
+        // checks if the track has changed
         if (trackChanged) {
             // if the track changes, sets both timer variables to 0
             currentProgress = 0
@@ -620,19 +641,23 @@ function progressAnimation() {
         // checks if the song's timer has run out, enforces a cap to the timer
         if (currentProgress > duration) {
             // sets the progress to match the length of the song, so that it doesn't go over
+            // this is due to some delay between the Spotify -> HTML connection
             currentProgress = duration;
         }
         // saves the last % the progress was at (so when it pauses it doesn't tilt)
         lastPercentage = (currentProgress / duration) * 100;
     }
 
-    // calculates the progress bar percentage based off last percentage saved
+    // if the player *is* paused, none of the calculations change, so everything stays the same
+
+    // calculates and sets the progress bar percentage based off last percentage saved
     bar.style.width = Math.min(100, lastPercentage) + "%";
 
     // timer update (calls timeFormat on both the current time and the duration)
+    // also controls the format, change the slash to change the style
     timer.textContent = `${timeFormat(currentProgress)} / ${timeFormat(duration)}`;
 
-    // updates the animation for the progress things (bar + timer) based on new data
+    // calls the animation request again
     requestAnimationFrame(progressAnimation);
 }
 

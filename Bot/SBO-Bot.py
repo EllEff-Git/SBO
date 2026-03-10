@@ -1,4 +1,4 @@
-import configparser, os, sys, threading, time
+import configparser, os, sys, threading
 # Required for basic function and getting the config options for bot
 import asyncio, asqlite, socket, aiohttp
 # Required to connect to the bot
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 
-SBO_Bot_ver = "v0.3.10.0017"
+SBO_Bot_ver = "v0.3.10.0900"
 """The SBO Bot version (y.m.dd.hhmm)"""
 
 
@@ -78,10 +78,6 @@ if not commandPrefix:
     # ensures the command prefix is set
     commandPrefix = "!"
     # sets to default of ! if not (program will not like an empty string)
-playbackControl = Config.getboolean("Twitch-Bot", "enable_Playback_Control")
-"""Whether to enable Twitch chat playback control (boolean)"""
-allowSubControl = Config.getboolean("Twitch-Bot", "allow_Subscriber_Control")
-"""Whether to allow subscribers to control playback (boolean)"""
 
 bot_Client_ID = Config.get("Twitch-Bot", "dev_Client_ID")
 """The Twitch Client ID from config"""
@@ -90,7 +86,7 @@ bot_Client_Secret = Config.get("Twitch-Bot", "dev_Client_Secret")
 
 ttvName = Config.get("Twitch-Bot", "twitch_Username")
 """The name of the channel whose chat the bot connects to"""
-botName = Config.get("Twitch-Bot", "bot_Name")
+botName = Config.get("Twitch-Bot", "bot_Username")
 """The name of the bot"""
 
 missingID = False
@@ -103,9 +99,169 @@ try:
     """The ID of the bot"""
     # stores the variables if they're set
 except:
-    # if one of the IDs is missing, sets the flag to true
+    # if even one of the IDs is missing, sets the flag to true
     missingID = True
     # this will trip the check at the bottom and stop the program
+
+
+
+### Command Configuration ###
+
+
+
+CommandConfig = configparser.ConfigParser(comment_prefixes= ["/", "#"], allow_no_value= True)
+"""The Command configuration file reader"""
+CmdCfgPath = os.path.join(directory, "commandConfig.ini")
+"""The directory where the commandConfig sits in"""
+CommandConfig.read(CmdCfgPath, "utf8")
+# Where the command config is read from, with UTF-8 format
+
+
+### Playlist ###
+enablePlaylist = CommandConfig.getboolean("Playlist", "enable", fallback=True)
+"""Whether playlist command is enabled (boolean)"""
+playlist_CD_chatter = CommandConfig.getint("Playlist", "cooldown_Chatter", fallback=600)
+"""The cooldown applied per user (1/x, int)"""
+playlist_CD_channel = CommandConfig.getint("Playlist", "cooldown_Channel", fallback=60)
+"""The cooldown applied channel-wide (1/x, int)"""
+playlistLevel = CommandConfig.get("Playlist", "required_Level", fallback="all").lower()
+"""The level required to use the command (string) - ID 0"""
+
+### Album ###
+enableAlbum = CommandConfig.getboolean("Album", "enable", fallback=True)
+"""Whether album command is enabled (boolean)"""
+album_CD_chatter = CommandConfig.getint("Album", "cooldown_Chatter", fallback=300)
+"""The cooldown applied per user (1/x, int)"""
+album_CD_channel = CommandConfig.getint("Album", "cooldown_Channel", fallback=30)
+"""The cooldown applied channel-wide (1/x, int)"""
+albumLevel = CommandConfig.get("Album", "required_Level", fallback="all").lower()
+"""The level required to use the command (string) - ID 1"""
+
+### Song ###
+enableSong = CommandConfig.getboolean("Song", "enable", fallback=True)
+"""Whether song/track command is enabled (boolean)"""
+song_CD_chatter = CommandConfig.getint("Song", "cooldown_Chatter", fallback=180)
+"""The cooldown applied per user (1/x, int)"""
+song_CD_channel = CommandConfig.getint("Song", "cooldown_Channel", fallback=30)
+"""The cooldown applied channel-wide (1/x, int)"""
+songLevel = CommandConfig.get("Song", "required_Level", fallback="all").lower()
+"""The level required to use the command (string) - ID 2"""
+
+### Pause ###
+enablePause = CommandConfig.getboolean("Pause", "enable", fallback=True)
+"""Whether pause command is enabled (boolean)"""
+pause_CD_chatter = CommandConfig.getint("Pause", "cooldown_Chatter", fallback=180)
+"""The cooldown applied per user (1/x, int)"""
+pause_CD_channel = CommandConfig.getint("Pause", "cooldown_Channel", fallback=60)
+"""The cooldown applied channel-wide (1/x, int)"""
+pauseLevel = CommandConfig.get("Pause", "required_Level", fallback="vip").lower()
+"""The level required to use the command (string) - ID 3"""
+
+### Resume ###
+enableResume = CommandConfig.getboolean("Resume", "enable", fallback=True)
+"""Whether resume command is enabled (boolean)"""
+resume_CD_chatter = CommandConfig.getint("Resume", "cooldown_Chatter", fallback=180)
+"""The cooldown applied per user (1/x, int)"""
+resume_CD_channel = CommandConfig.getint("Resume", "cooldown_Channel", fallback=60)
+"""The cooldown applied channel-wide (1/x, int)"""
+resumeLevel = CommandConfig.get("Resume", "required_Level", fallback="vip").lower()
+"""The level required to use the command (string) - ID 4"""
+
+### Skip ###
+enableSkip = CommandConfig.getboolean("Skip", "enable", fallback=True)
+"""Whether skip command is enabled (boolean)"""
+skip_CD_chatter = CommandConfig.getint("Skip", "cooldown_Chatter", fallback=180)
+"""The cooldown applied per user (1/x, int)"""
+skip_CD_channel = CommandConfig.getint("Skip", "cooldown_Channel", fallback=60)
+"""The cooldown applied channel-wide (1/x, int)"""
+skipLevel = CommandConfig.get("Skip", "required_Level", fallback="vip").lower()
+"""The level required to use the command (string) - ID 5"""
+
+### Previous ###
+enablePrevious = CommandConfig.getboolean("Previous", "enable", fallback=True)
+"""Whether previous command is enabled (boolean)"""
+previous_CD_chatter = CommandConfig.getint("Previous", "cooldown_Chatter", fallback=180)
+"""The cooldown applied per user (1/x, int)"""
+previous_CD_channel = CommandConfig.getint("Previous", "cooldown_Channel", fallback=60)
+"""The cooldown applied channel-wide (1/x, int)"""
+previousLevel = CommandConfig.get("Previous", "required_Level", fallback="vip").lower()
+"""The level required to use the command (string) - ID 6"""
+
+### Queue ###
+enableQueue = CommandConfig.getboolean("Queue", "enable", fallback=True)
+"""Whether queue command is enabled (boolean)"""
+queue_CD_chatter = CommandConfig.getint("Queue", "cooldown_Chatter", fallback=180)
+"""The cooldown applied per user (1/x, int)"""
+queue_CD_channel = CommandConfig.getint("Queue", "cooldown_Channel", fallback=60)
+"""The cooldown applied channel-wide (1/x, int)"""
+queueLevel = CommandConfig.get("Queue", "required_Level", fallback="vip").lower()
+"""The level required to use the command (string) - ID 7"""
+
+
+### Command Level Mapping ###
+
+
+commandLevels = [playlistLevel, 
+                 albumLevel, 
+                 songLevel, 
+                 pauseLevel, 
+                 resumeLevel, 
+                 skipLevel, 
+                 previousLevel, 
+                 queueLevel]
+"""A list of all the command requirement levels"""
+# takes all the user level requirement variables and puts into a list
+
+commandLevelList = []
+"""A list of command levels, in number format (1-6 with 3 fallback)"""
+# creates an empty list to append numbers into below
+
+for i in commandLevels:
+    # goes through every command's set level and appends a number based on the config setting
+    if i == "all":
+        commandLevelList.append(1)
+        # if the command level is "all", assigns value 1
+    elif i == "subscriber" or i == "sub":
+        commandLevelList.append(2)
+        # if the command level is "subscriber"/"sub", assigns value 2
+    elif i == "vip":
+        commandLevelList.append(3)
+        # if the command level is "vip", assigns value 3
+    elif i == "mod" or i == "moderator":
+        commandLevelList.append(4)
+        # if the command level is "mod", assigns value 4
+    elif i == "lead moderator" or i == "lead" or i == "lead mod":
+        commandLevelList.append(5)
+        # if the command level is "lead mod"/"lead moderator"/"lead", assigns value 5
+    elif i == "broadcaster" or i == "streamer":
+        commandLevelList.append(6)
+        # if the command level is "broadcaster" or "streamer", assigns value 6
+    else:
+        commandLevelList.append(4)
+        # if the command level is none of the above, assigns default fallback of 4 (Moderator), to prevent accidentally allowing unwanted control
+
+permissionMap = {
+    "playlist": commandLevelList[0],
+    "album": commandLevelList[1],
+    "song": commandLevelList[2],
+    "pause": commandLevelList[3],
+    "resume": commandLevelList[4],
+    "skip": commandLevelList[5],
+    "previous": commandLevelList[6],
+    "queue": commandLevelList[7]
+}
+"""A map of required levels to use each command (0-6), based on the command's internal ID (0 ->)"""
+# stores each of the command's required use level as a permission map that can be called by isCoolChatter to check
+
+
+if any([enablePause,enableResume,enableSkip,enablePrevious,enableQueue]):
+    # checks if any of the "playback control" commands are enabled
+    playbackControls = True
+    # sets playbackControls to True if any are (this just tells the startup print what to display, debug/QoL)
+else:
+    # if none are
+    playbackControls = False
+    # sets playbackControls to False
 
 
 
@@ -113,23 +269,15 @@ except:
 
 
 
-if playbackControl:
-    # if the Twitch chat playback control is enabled
-    print(f"Twitch Chat playback control is enabled", flush=True)
-    # user "warn" print
-    webClient = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # sets up the webclient socket
-    webClient.connect(("127.0.0.1", 6666))
-    # creates a socket connection on localhost
-    print(f"Attempting to connect to PTP", flush=True)
-    # (debug) print
+webClient = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# sets up the webclient socket
+webClient.connect(("127.0.0.1", 6666))
+# creates a socket connection on localhost
+print(f"Attempting to connect to PTP", flush=True)
+# (debug) print
 
 def dataPasser(command: str, uri: str):
     """A function to send commands to SBO (takes the command and spotify URI/URL as parameters)"""
-    if not playbackControl:
-        # if playback is disabled
-        return "Playback control disabled"
-        # sends the response back to the bot so it can reply
 
     if command == "skip":
         # if the command is skip
@@ -172,7 +320,6 @@ def dataPasser(command: str, uri: str):
         # sends the response back to the bot so it can reply
     
     else:
-        # shouldn't ever get other commands
         print(f"Playback control ready", flush=True)
         # indicates that the playback control has been started (since the run sends bs parameters)
 
@@ -183,7 +330,7 @@ def dataPasser(command: str, uri: str):
 
 
 def getData():
-    """Function to get the current playlist/track/whatever else"""
+    """Function to get the current playlist/track/whatever else from the sbo.txt file"""
 
     if not os.path.exists(sbotxtPath):
         # ensures the text file exists
@@ -213,22 +360,51 @@ def getData():
 
 
 def isCoolChatter():
-    """Function to check if the calling chatter is authorised"""
-    def chatterChecker(ctx):
-        """Helper function"""
-        chatter = ctx.author
-        # assigns the author as a chatter
-        if allowSubControl and chatter.subscriber:
-            # if subscribers are allowed to use 
+    """Function to check if the calling chatter is authorised to use sent command"""
+    def chatterChecker(sender, command):
+        """Helper function, takes the sent message's context and the command as parameter"""
+        chatter = sender.author
+        # assigns the message sender's author as "chatter"
+        reqLevel = permissionMap.get(command)
+        # gets the required level from the permission map (all, subscriber, vip, mod)
+        currentLevel = 0
+        # sets the current level to 0 to start with (0=nothing, 1=any, 2=sub, 3=vip/artist,)
+
+        if chatter.subscriber:
+            # if the chatter is a subscriber
+            currentLevel = 2
+
+        elif chatter.vip or chatter.artist:
+            # if the chatter is a VIP or artist
+            currentLevel = 3
+
+        elif chatter.moderator:
+            # if the chatter is a moderator
+            currentLevel = 4
+
+        elif chatter.lead_moderator:
+            # if the chatter is a lead moderator
+            currentLevel = 5
+
+        elif chatter.broadcaster:
+            # if the chatter is the streamer
+            currentLevel = 6
+
+        else:
+            # if the user isn't any of the above, assumes normal user (also fits admin, staff, etc)
+            currentLevel = 1
+
+        if reqLevel <= currentLevel:
+            # if the required level is lower or equal to the current chatter's level
             return True
-        elif chatter.vip or chatter.admin or chatter.broadcaster or chatter.lead_moderator or chatter.moderator:
-            # checks if the chatter's roles fits any of these
-            return True
-            # if yes, returns true
+            # tells isCoolChatter() the chatter is, in fact, cool
         else:
             return False
-            # if not, returns false
+            # tells isCoolChatter() the chatter, unfortunately, isn't cool :(
+
     return chatterChecker
+    # returns the result to calling command
+
         
 
 
@@ -276,14 +452,15 @@ class Bot(commands.AutoBot):
                     return True
                     # returns true, which sets the boolean for live to true
                 else:
+                    return True
                     # if data key doesn't exist or is empty
-                    return False
-                    # returns false, which keeps the boolean for live false
+                    # return False
+                    # returns false, which keeps the boolean for channelLive false, disallowing commands that require it
 
 ### Check Status of Live Check ###
 
     async def checkLiveCheck(self):
-        # runs liveCheck every minute to see if the channel has started stream
+        # runs liveCheck every minute to see if the channel is live
         logged = False
         # sets a boolean to check if the status has been logged already
         while True:
@@ -296,10 +473,15 @@ class Bot(commands.AutoBot):
                 # ensures they do
                 if channelLive:
                     # if the channel is live
-                    if not logged:
-                        # if the live status hasn't already been logged once
-                        print(f"{ttvName} is now live!", flush=True)
+                    if not logged and playbackControls:
+                        # if the live status hasn't already been logged once and playback controls are on (at least one playback command is enabled)
+                        print(f"{ttvName} is live! Playback control enabled for at least one command! ", flush=True)
                         # prints a live message
+                        logged = True
+                        # changes boolean to True to prevent constant logging
+                    elif not logged and not playbackControls:
+                        # if the live status hasn't already been logged once, but all "playback controls" are off
+                        print(f"{ttvName} is live! All playback controls are disabled via config")
                         logged = True
                         # changes boolean to True to prevent constant logging
                 else:
@@ -395,69 +577,97 @@ class CommandComponent(commands.Component):
 ### Playlist ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
-    @commands.cooldown(rate = 1, per=300, key=commands.BucketType.chatter)
+    @commands.cooldown(rate=1, per=playlist_CD_channel, key=commands.BucketType.channel)
+    @commands.cooldown(rate=1, per=playlist_CD_chatter, key=commands.BucketType.chatter)
     async def playlist(self, context: commands.Context) -> None:
-        """!playlist"""
+        """playlist"""
 
-        if self.bot.channelLive:
-        # checks if the channel is live first
-            sbo = getData()
-            # calls the data grabber to get the package (dictionary)
-            playlist = sbo.get("Playlist URL")
-            # gets the playlist URL from the dictionary 
+        if self.bot.channelLive and enablePlaylist:
+        # checks if the channel is live and the command is enabled
+            if isCoolChatter()(context, "playlist"):
+                sbo = getData()
+                # calls the data grabber to get the package (dictionary)
+                playlist = sbo.get("Playlist URL")
+                # gets the playlist URL from the dictionary 
 
-            if playlist == "No playlist":
-                # if the playlist isn't set (SBO sets it to this if no playlist is active)
-                await context.reply(f"{ttvName} is not currently listening to a playlist")
-                # sends a playlist-less message
-            else:
-                # if the playlist return is anything else
-                await context.reply(f"Current playlist: {playlist}")
-                # sends a message with the playlist URL
+                if playlist == "No playlist":
+                    # if the playlist isn't set (SBO sets it to this if no playlist is active)
+                    await context.reply(f"{ttvName} is not currently listening to a playlist")
+                    # sends a playlist-less message
+                else:
+                    # if the playlist return is anything else
+                    await context.reply(f"Current playlist: {playlist}")
+                    # sends a message with the playlist URL
+
+### Album ###
+
+    @commands.command()
+    @commands.cooldown(rate = 1, per=album_CD_channel, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=album_CD_chatter, key=commands.BucketType.chatter)
+    async def album(self, context: commands.Context) -> None:
+        """album"""
+
+        if self.bot.channelLive and enableAlbum:
+        # checks if the channel is live and the command is enabled
+            if isCoolChatter()(context, "album"):
+                sbo = getData()
+                # calls the data grabber to get the package (dictionary)
+                album = sbo.get("Album URL")
+                # gets the album URL from the dictionary 
+
+                if album == "A local album":
+                    # if the album isn't set (SBO sets it to this if playback is local)
+                    await context.reply(f"No album found")
+                    # sends a album-less message
+                else:
+                    # if the playlist return is anything else
+                    await context.reply(f"Current album: {album}")
+                    # sends a message with the album URL
 
 ### Song ###
 
     @commands.command(aliases=["song"])
-    @commands.cooldown(rate = 1, per=15, key=commands.BucketType.channel)
-    @commands.cooldown(rate = 1, per=180, key=commands.BucketType.chatter)
+    @commands.cooldown(rate = 1, per=song_CD_channel, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=song_CD_chatter, key=commands.BucketType.chatter)
     async def track(self, context: commands.Context) -> None:
-        """!track and !song"""
+        """track and song"""
 
-        if self.bot.channelLive:
-        # checks if the channel is live first
-            sbo = getData()
-            # calls the data grabber to get the package (dictionary)
-            track = sbo.get("Song Name")
-            # gets the track from the dictionary
-            artist = sbo.get("Artist Name")
-            # gets the artist name from the dictionary
-            trackURL = sbo.get("Spotify URL")
-            # gets the track URL from the dictionary
-            
-            if trackURL == "A local song":
-                # if the song is local (SBO sets it to this if a local song is detected)
-                await context.reply(f"{ttvName} is listening to a locally stored song")
-                # sends a local song message
-            elif trackURL == None:
-                # if the song is empty
-                await context.reply(f"{ttvName} is not listening to Spotify")
-                print(f"If you see this message, but your Spotify is playing, check the status of SBO and Spotify", flush=True)
-            else:
-                # if the song return is anything else
-                await context.reply(f"Current song: {track} by {artist}. {trackURL}")
-                # sends a message with the song URL
+        if self.bot.channelLive and enableSong:
+        # checks if the channel is live and the command is enabled
+            if isCoolChatter()(context, "song"):
+                sbo = getData()
+                # calls the data grabber to get the package (dictionary)
+                track = sbo.get("Song Name")
+                # gets the track from the dictionary
+                artist = sbo.get("Artist Name")
+                # gets the artist name from the dictionary
+                trackURL = sbo.get("Spotify URL")
+                # gets the track URL from the dictionary
+                
+                if trackURL == "A local song":
+                    # if the song is local (SBO sets it to this if playback is local)
+                    await context.reply(f"{ttvName} is listening to a local song")
+                    # sends a local song message
+                elif trackURL == None:
+                    # if the song is empty
+                    await context.reply(f"{ttvName} is not listening to Spotify")
+                    print(f"If you see this message, but your Spotify is playing, check the status of SBO and Spotify", flush=True)
+                else:
+                    # if the song return is anything else
+                    await context.reply(f"Current song: {track} by {artist}. {trackURL}")
+                    # sends a message with the song URL
 
 ### Skip ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=skip_CD_channel, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=skip_CD_chatter, key=commands.BucketType.chatter)
     async def skip(self, context: commands.Context) -> None:
-        """!skip"""
+        """skip"""
 
-        if self.bot.channelLive:
-        # checks if the channel is live first
-            if isCoolChatter()(context):
+        if self.bot.channelLive and enableSkip:
+        # checks if the channel is live and the command is enabled
+            if isCoolChatter()(context, "skip"):
                 # checks if the permissions are met
                 dataPasser("skip", "")
                 # calls the dataPasser function
@@ -469,13 +679,14 @@ class CommandComponent(commands.Component):
 ### Pause ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=pause_CD_channel, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=pause_CD_chatter, key=commands.BucketType.chatter)
     async def pause(self, context: commands.Context) -> None:
-        """!pause"""
+        """pause"""
 
-        if self.bot.channelLive:
-        # checks if the channel is live first
-            if isCoolChatter()(context):
+        if self.bot.channelLive and enablePause:
+        # checks if the channel is live and the command is enabled
+            if isCoolChatter()(context, "pause"):
                 dataPasser("pause", "")
                 # calls the dataPasser function
 
@@ -484,14 +695,15 @@ class CommandComponent(commands.Component):
 
 ### Resume ###
 
-    @commands.command()
-    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
+    @commands.command(aliases=["continue"])
+    @commands.cooldown(rate = 1, per=resume_CD_channel, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=resume_CD_chatter, key=commands.BucketType.chatter)
     async def resume(self, context: commands.Context) -> None:
-        """!resume"""
+        """resume"""
 
-        if self.bot.channelLive:
-        # checks if the channel is live first
-            if isCoolChatter()(context):
+        if self.bot.channelLive and enableResume:
+        # checks if the channel is live and the command is enabled
+            if isCoolChatter()(context, "resume"):
                 # checks if the permissions are met
                 dataPasser("resume", "")
                 # calls the dataPasser function
@@ -502,13 +714,14 @@ class CommandComponent(commands.Component):
 ### Previous ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=previous_CD_channel, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=previous_CD_chatter, key=commands.BucketType.chatter)
     async def previous(self, context: commands.Context) -> None:
-        """!previous"""
+        """previous"""
 
-        if self.bot.channelLive:
-        # checks if the channel is live first
-            if isCoolChatter()(context):
+        if self.bot.channelLive and enablePrevious:
+        # checks if the channel is live and the command is enabled
+            if isCoolChatter()(context, "previous"):
                 # checks if the permissions are met
                 dataPasser("previous", "")
                 # calls the dataPasser function
@@ -519,13 +732,14 @@ class CommandComponent(commands.Component):
 ### Queue ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=30, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=queue_CD_channel, key=commands.BucketType.channel)
+    @commands.cooldown(rate = 1, per=queue_CD_chatter, key=commands.BucketType.chatter)
     async def queue(self, context: commands.Context) -> None:
-        """!queue"""
+        """queue"""
 
-        if self.bot.channelLive:
-        # checks if the channel is live first
-            if isCoolChatter()(context):
+        if self.bot.channelLive and enableQueue:
+        # checks if the channel is live and the command is enabled
+            if isCoolChatter()(context, "queue"):
                 # checks if the permissions are met
                 fullMsg = context.content
                 # gets the full message from the contents
@@ -533,17 +747,20 @@ class CommandComponent(commands.Component):
                     cmd, songLink = fullMsg.split(" ", 1)
                     # splits the command, stores the link for the song as songLink
 
-                    dataPasser("queue", songLink)
-                    # calls the dataPasser function with the link
+                    if len(songLink) == 22 or songLink.startswith(["http:", "https:", "spotify:"]):
+                        # must be one of: "song uri, id, or url", so it checks if the length matches an ID's 22 character length
+                        # or if the song starts with http:, https: or spotify: (signs of a URL or URI)
 
-                    await context.reply(f"Queued song")
-                    # replies to user
+                        dataPasser("queue", songLink)
+                        # calls the dataPasser function with the link
+
+                        await context.reply(f"Queued song")
+                        # replies to user
 
                 except:
-                    # if the command was entered incorrectly
+                    # if the command fails
                     await context.reply(f"Add a valid Spotify link after !queue, please")
                     # replies to user 
-
 
 ### SBO ###
 
@@ -552,26 +769,29 @@ class CommandComponent(commands.Component):
     async def sbo(self, context: commands.Context) -> None:
         """!sbo / !SBO"""
 
-        await context.reply(f"The SBO Bot (esbeohBot) is a Twitch bot made by LP to simplify Spotify-Twitch connection, currently on {SBO_Bot_ver}")
+        await context.reply(f"SBO is a Twitch Bot base made to simplify Spotify-Twitch connection, currently on {SBO_Bot_ver} // LP")
         # replies with the SBO details
 
 ### Command Error ###
 
-    @commands.Component.listener()
-    async def error(self, context: commands.Context, error: Exception) -> None:
-        """Handles any command error"""
+    async def event_command_error(self, context: commands.Context, error: Exception):
+        """Handles Twitch(IO) command errors"""
         if isinstance(error, commands.CommandNotFound):
             # if the command returns a "command not found"
             return
             # doesn't return anything, because it's expected behavior
-        elif isinstance(error, commands.exceptions.CommandOnCooldown):
+        if isinstance(error, commands.CommandOnCooldown):
             # if the command returns a "cooldown"
-            await print(f"Command on cooldown", flush=True)
+            cooldown = round(error.remaining)
+            # stores the time remaining for user/channel cooldown
+            await print(f"Command is on cooldown for {cooldown} seconds", flush=True)
             # logs a cooldown message
-        elif isinstance(error, commands.exceptions.MissingRequiredArgument):
+            return
+        if isinstance(error, commands.MissingRequiredArgument):
             # if there's a missing
             await context.reply(f"Missing parameter")
             # sends a parameter message
+            return
         else:
             # if it's something else
             await print(f"Error handling {context.command}: {error}", flush=True)
@@ -652,24 +872,22 @@ def logWriter() -> None:
 
 if missingID:
     # checks if the channelID exists (required for connection)
-        print(f"ChannelID not found, please enter it into the config file", flush=True)
+        print(f"ChannelID/BotID not found, please enter into the config file", flush=True)
         # user inform
         input("Press enter to exit", flush=True)
         raise SystemExit
 
-if not ttvName:
-    # checks if the channel name exists (required for conduit/connection)
-        print(f"Channel name not found, please enter it into the config file", flush=True)
+if not ttvName or not botName:
+    # checks if the channel/bot name exist (required for conduit/connection)
+        print(f"Twitch username or bot username not found, please enter into the config file", flush=True)
         # user inform
         input("Press enter to exit", flush=True)
         raise SystemExit
 
-if playbackControl:
-    # if the Twitch chat playback is enabled
-    dataPassThread = threading.Thread(target = lambda: dataPasser("start", "uri"))
-    # creates a thread for websocket connection
-    dataPassThread.start()
-    # starts the websocket thread
+dataPassThread = threading.Thread(target = lambda: dataPasser("start", "uri"))
+# creates a thread for websocket connection
+dataPassThread.start()
+# starts the websocket thread
 
 
 if __name__ == "__main__":

@@ -8,8 +8,9 @@ from fastapi.responses import FileResponse
 # Required for getting status from server
 
 
-SBO_WSver = "v0.3.09.0414"
+SBO_WSver = "v0.3.10.0800"
 """The program version (y.m.dd.hhmm)"""
+
 
 ### Directories ###
 
@@ -113,7 +114,7 @@ progressBarPaused = "#" + Config.get("Bar", "progress_Bar_Paused")
 """The progress bar color when paused in HTML (hex)"""
 
 
-print(f"Websocket program {SBO_WSver} started successfully", flush=True)
+print(f"HTML overlay program {SBO_WSver} starting", flush=True)
 # quick user update
 
 
@@ -143,8 +144,8 @@ with open(jsonCfg, "w") as htmlcfg:
     # stores the HTMLconfig inside
 
 
-print(f"HTML config has been read successfully", flush=True)
-# config update
+print(f"HTML config updated", flush=True)
+# config read user update
 
 
 def readSBO():
@@ -164,13 +165,14 @@ def readSBO():
                 # stores inside the made dictionary as keyed entries
 
     if artistPrefix:
-        # if artistPrefix isn't empty
+        # if artistPrefix isn't empty (config)
         artistName = sbo.get("Artist Name")
         artistName = artistPrefix + " " + artistName
         # adds it to the start of the string
         sbo["Artist Name"] = artistName
+
     if albumPrefix:
-        # if albumPrefix isn't empty
+        # if albumPrefix isn't empty (config)
         albumName = sbo.get("Album Name")
         albumName = albumPrefix + " " + albumName
         # adds it to the start of the string
@@ -229,7 +231,7 @@ async def websocket(ws: WebSocket):
     # goes to send the first package immediately
 
         sbo = readSBO()
-        # calls readTTV and then stores the dictionary here as ttv
+        # calls readSBO and then stores the dictionary here as sbo
         songProg, songDur = unixConverter(sbo)
         # stores the progress and duration times from unixConverter
 
@@ -274,8 +276,9 @@ async def websocket(ws: WebSocket):
             # sends the payload to websocket
 
     except (WebSocketDisconnect, ConnectionResetError):
-        # any "disconnect" (leaving the site)
+        # any "disconnect" (leaving the site, refreshing, etc)
         pass
+        # doesn't do anything
 
     except Exception as ex:
         # if it somehow fails
@@ -288,6 +291,7 @@ async def websocket(ws: WebSocket):
 
 if __name__ == "__main__":
     # runs the socket starter
-    print(f"Websocket started!", flush=True)
+    print(f"Overlay online at localhost:{httpPort}!", flush=True)
+    # prints first, otherwise won't print
     uvicorn.run(program, host="127.0.0.1", port=httpPort, log_level="warning", access_log=False)
     # starts the web server as the FastAPI program, using a preset IP of (local) with the configurable httpPort - disables non-error prints and http requests
