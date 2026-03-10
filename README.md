@@ -28,8 +28,8 @@ Requires a Spotify Premium account, which is used to create a Spotify developer 
 
 </br>
 
-Default appearance at localhost website: </br>
+Default appearance at localhost website: (white background is a browser rendering, capture does not keep that) </br>
 ![Imgur Image](https://i.imgur.com/6aGvPmw.png)
 
-Default appearance in OBS: </br>
+Default appearance in OBS: (background is VSCode, not in the overlay itself) </br>
 ![Imgur Image](https://i.imgur.com/eG1Pb2N.png)
