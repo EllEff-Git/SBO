@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.3.11.1545</title>
+<title>Spotify Overlay v0.3.11.1609</title>
 
 <script>
 
@@ -167,17 +167,13 @@ document.addEventListener("DOMContentLoaded", () => {
             // adds/removes the paused element style, based on the payload boolean for pause state
             if(isPaused) player.classList.add("paused");
             else player.classList.remove("paused");
-
-            // if the text scrolling is enabled and the element's scroll width is big enough
-            if (enableScrolling && (titleElement.scrollWidth > maxInfoSize)) {
+            
+            // if the scrolling is enabled via config
+            if (enableScrolling) {
                 // calls the length-checking function to get the size of the title field
                 checkTextSize(titleElement);
-            }
-            if (enableScrolling && (artistElement.scrollWidth > maxInfoSize)) {
                 // calls the length-checking function to get the size of the artist field
                 checkTextSize(artistElement);
-            }
-            if (enableScrolling && (albumElement.scrollWidth > maxInfoSize)) {
                 // calls the length-checking function to get the size of the album field
                 checkTextSize(albumElement);
             }
