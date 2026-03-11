@@ -1,6 +1,6 @@
 import asyncio, os, sys, json, time, configparser
 # Required for file directory grabs, reads, asynchronous functions, etc
-import websockets, uvicorn, requests
+import uvicorn
 # Required for websocketing and site management
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 # Required for web server hosting
@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 # Required for getting status from server
 
 
-SBO_WSver = "v0.3.10.0800"
+SBO_WSver = "v0.3.11.1457"
 """The program version (y.m.dd.hhmm)"""
 
 
@@ -80,8 +80,8 @@ except:
     # if it can't save as integer, turns into lowercase
     titleWeight = titleWeight.lower()
 
-titleColor = "#" + Config.get("Title", "title_Color")
-"""The color of the title txt in HTML (hex)"""
+defaultTitleColor = "#" + Config.get("Title", "title_Color", fallback="#ffffff")
+"""The default color for title (may be overwritten via SBO due to Bot (string, hex))"""
 
 ### Support ###
 
@@ -96,22 +96,40 @@ except:
     # if it can't save as integer, turns into lowercase
     supportWeights = supportWeights.lower()
 
-supportColors = "#" + Config.get("Support", "support_Colors")
-"""The color of text elements in HTML (hex)"""
+defaultSupportColors = "#" + Config.get("Support", "support_Colors", fallback="#ffffff")
+"""The default color for support texts (may be overwritten via SBO due to Bot (string, hex))"""
 
 ### Border ###
 
 borderStyle = Config.get("Border", "border_Style").lower()
 """The border styling in HTML (string)"""
-borderColor = "#" + Config.get("Border", "border_Color")
-"""The color of the border element in HTML (hex)"""
+defaultBorderColor = "#" + Config.get("Border", "border_Color", fallback="#ffffff")
+"""The default color for border (may be overwritten via SBO due to Bot (string, hex))"""
 
 ### Progress Bar ###
 
-progressBarDefault = "#" + Config.get("Bar", "progress_Bar_Color")
-"""The progress bar's fill color in HTML (hex)"""
+defaultBarColor = "#" + Config.get("Bar", "progress_Bar_Color")
+"""The default color for bar (may be overwritten via SBO due to Bot (string, hex))"""
 progressBarPaused = "#" + Config.get("Bar", "progress_Bar_Paused")
 """The progress bar color when paused in HTML (hex)"""
+
+### Field Mapper ##
+
+allTypes = {
+    "color": ["titleColor", "supportColor", "progressColor", "borderColor"],
+
+    "track": ["title", "artist", "album", "cover", "paused", "id",
+            "progress", "duration"],
+
+    "full": ["title", "artist", "album", "cover", "paused", "id", 
+            "titleColor", "supportColor", "progressColor", "borderColor", 
+            "progress", "duration"]
+}
+# a map of what types of fields are added to the payload based on the key given via payloadBuilder
+# color only updates the colors (no need to mess with the whole program)
+# progress only updates the timestamps (basically just ensuring everything's working smooth)
+# track updates all the song-related info (also includes timestamps to match them)
+# full updates everything (means both song and at least 1 color has changed)
 
 
 print(f"HTML overlay program {SBO_WSver} starting", flush=True)
@@ -125,17 +143,17 @@ HTMLconfig = {
     "playerOpacity": playerOpacity,
     "titleStyle": titleStyle,
     "titleWeight": titleWeight,
-    "titleColor": titleColor,
+    "titleColor": defaultTitleColor,
     "supportStyles": supportStyles,
     "supportWeights": supportWeights,
-    "supportColors": supportColors,
+    "supportColors": defaultSupportColors,
     "borderStyle": borderStyle,
-    "borderColor": borderColor,
-    "progressBarColor": progressBarDefault,
+    "borderColor": defaultBorderColor,
+    "progressBarColor": defaultBarColor,
     "progressBarPaused": progressBarPaused,
     "enableScrolling": enableScrolling
 }
-# assembles a config dictionary that will get passed to HTML
+# assembles a config dictionary that will get passed to HTML/localhost
 
 
 with open(jsonCfg, "w") as htmlcfg:
@@ -148,8 +166,8 @@ print(f"HTML config updated", flush=True)
 # config read user update
 
 
-def readSBO():
-    """Function to read the sbo.txt file"""
+def readSBO() -> dict:
+    """Function to read the sbo.txt file and return "sbo", a dictionary"""
     sbo = {}
     # empty dictionary to store the contents in
 
@@ -185,8 +203,8 @@ def readSBO():
     # returns the dictionary to the calling function
 
 
-def unixConverter(sbo):
-    """Function that turns UNIX timestamps into a progress bar"""
+def unixConverter(sbo: dict) -> int:
+    """Function that turns UNIX timestamps into progress and duration times"""
     try:
         songStart = int(sbo.get("UNIX Start"))
         # gets the timestamp for the song's start from the dictionary
@@ -207,6 +225,29 @@ def unixConverter(sbo):
         return 0, 1
 
 
+def noneRemover(string: str) -> str:
+    """Function that ensures no "None" values are sent through payload (None breaks JS)"""
+    return None if string in (None, "None", "") else string
+    # if the given string matches None, "None" or "", it returns None - otherwise returns the string
+
+
+def payloadBuilder(map: dict, type: str, fields: list) -> str:
+    """Dynamically constructs a payload based on the data passed and turns into a json string"""
+    # takes a map (dictionary) of data (payloads), the type that triggered the change and the fields that should be added into the payload
+    # for example, if a color is set as the type (and fields), it constructs a payload with all the color fields as keys (titleColor, supportColor...) 
+
+    builtPayload = {
+        key: map[key] for key in fields if key in map
+    }
+    # builds the payload from the passed fields, using format of: "map = {key:value}", if key exists
+
+    builtPayload["type"] = type
+    # sets the payload's type field to match the passed argument (track, color or progress)
+
+    return json.dumps(builtPayload)
+    # returns the full built payload in json format
+
+
 @program.get("/")
 # gets the HTML page
 def index():
@@ -218,14 +259,18 @@ def index():
 def configPush():
     return FileResponse(jsonCfg, media_type="application/json")
     # sends the json dictionary that python made from config.ini
+    # this can be seen by going to localhost:(port)/config.json
 
 
 @program.websocket("/ws")
 # handles the websocket
 async def websocket(ws: WebSocket):
+    global allTypes
 
     await ws.accept()
+    # gets the connection
     clients.add(ws)
+    # adds clients to websocket
 
     try:
     # goes to send the first package immediately
@@ -235,45 +280,113 @@ async def websocket(ws: WebSocket):
         songProg, songDur = unixConverter(sbo)
         # stores the progress and duration times from unixConverter
 
-        payload = json.dumps({
+        initialPayload = {
             "title": sbo.get("Song Name", ""),
             "artist": sbo.get("Artist Name", ""),
             "album": sbo.get("Album Name", ""),
             "cover": sbo.get("Spotify Image", ""),
-            "progress": songProg,
-            "duration": songDur,
-            "paused": sbo.get("Pause State", ""),
-            "id": sbo.get("Track ID", "")
-        })
+            "paused": sbo.get("Pause State", False),
+            "id": sbo.get("Track ID", ""),
+            "titleColor": noneRemover(sbo.get("Song Color")),
+            "supportColor": noneRemover(sbo.get("Text Color")),
+            "progressColor": noneRemover(sbo.get("Bar Color")),
+            "borderColor": noneRemover(sbo.get("Overlay Color"))
+        }
+        # constructs an initial payload that
 
-        await ws.send_text(payload)
-        # sends the payload
+        lastPayload = initialPayload.copy()
+        # saves a copy of the initial payload payload to compare to later
+
+        initialPayload["progress"] = songProg
+        initialPayload["duration"] = songDur
+        # adds the timestamp keys after copying (because the progress will change *every* update, and sending a payload because of that is wasteful)
+
+        lastColors = {
+            "titleColor": initialPayload["titleColor"],
+            "supportColor": initialPayload["supportColor"],
+            "progressColor": initialPayload["progressColor"],
+            "borderColor": initialPayload["borderColor"]
+        }
+        # stores a map of the last colors sent, to be compared in the next update
+
+        oldTrackID = initialPayload["id"]
+        # stores the ID to check for a song change
+
+        await ws.send_text(payloadBuilder(initialPayload, "full", allTypes["full"]))
+        # sends the payload with "track" type for when payloadBuilder returns it
+
+        await asyncio.sleep(2)
+        # sleeps 2 seconds after sending initial payload
 
         while True:
-        # this runs constantly after
-
-            await asyncio.sleep(1)
-            # waits a second
+        # this runs constantly after, with a short cooldown, thanks to the "await asyncio.sleep(2)" at the end of the loop
 
             sbo = readSBO()
-            # calls readTTV and then stores the dictionary here as ttv
+            # calls readSBO and then stores the dictionary here as sbo
+            
             songProg, songDur = unixConverter(sbo)
             # stores the progress and duration times from unixConverter
 
-            payload = json.dumps({
+            payload = {
                 "title": sbo.get("Song Name", ""),
                 "artist": sbo.get("Artist Name", ""),
                 "album": sbo.get("Album Name", ""),
                 "cover": sbo.get("Spotify Image", ""),
-                "progress": songProg,
-                "duration": songDur,
-                "paused": sbo.get("Pause State", ""),
-                "id": sbo.get("Track ID", "")
-            })
-            # constructs a "payload" (data to send to html) out of the read file data
+                "paused": sbo.get("Pause State", False),
+                "id": sbo.get("Track ID", ""),
+                "titleColor": noneRemover(sbo.get("Song Color")),
+                "supportColor": noneRemover(sbo.get("Text Color")),
+                "progressColor": noneRemover(sbo.get("Bar Color")),
+                "borderColor": noneRemover(sbo.get("Overlay Color"))
+            }
+            # constructs a new payload
 
-            await ws.send_text(payload)
-            # sends the payload to websocket
+            currentColors = {
+                "titleColor": payload["titleColor"],
+                "supportColor": payload["supportColor"],
+                "progressColor": payload["progressColor"],
+                "borderColor": payload["borderColor"]
+            }
+            # stores a map of the newly updated colors
+
+            if payload != lastPayload:
+                # if the payloads aren't the same at this stage (means there's some data to update HTML)
+                # if they are, just skips to sleep and restarts loop
+                lastPayload = payload.copy()
+                # changes the temp payload variable to match
+
+                if payload["id"] != oldTrackID:
+                    # checks if the old track ID matches the new one (song change)
+                    oldTrackID = payload["id"]
+                    # sets the variable to match
+                    songChange = True
+                    # sets boolean to True
+                else:
+                    # if the song hasn't changed
+                    songChange = False
+                    # sets boolean to False
+
+                payload["progress"] = songProg
+                payload["duration"] = songDur
+                # adds the timestamps *after* checking against the old version
+
+                if currentColors != lastColors:
+                    # if any of the colors have changed
+                    if songChange:
+                        # if the song has also changed
+                        await ws.send_text(payloadBuilder(payload, "full", allTypes["full"]))
+                        # sends a full payload (track + colors)
+                    else:
+                        # if the song hasn't changed
+                        await ws.send_text(payloadBuilder(payload, "color", allTypes["color"]))
+                        # sends only a color payload
+                else:
+                    # if no colors have changed (must mean something in the track has)
+                    await ws.send_text(payloadBuilder(payload, "track", allTypes["track"]))
+                    # sends the track payload
+
+            await asyncio.sleep(2)
+            # sleeps for 2 seconds between
 
     except (WebSocketDisconnect, ConnectionResetError):
         # any "disconnect" (leaving the site, refreshing, etc)

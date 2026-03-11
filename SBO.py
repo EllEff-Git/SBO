@@ -15,7 +15,7 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.10.0910"
+SBO_ver = "v0.3.11.1545"
 """The SBO program version (y.m.dd.hhmm)"""
 
 
@@ -63,16 +63,17 @@ print(f"{Time()}[START]: Starting SBO {SBO_ver}\n")
 # quick user update on status
 
 
-# Event Thread #
+# Event Thread / Auth Lock #
 
 songEvent = threading.Event()
 """Creates an empty threading event list for song"""
 
 spotifyLock = threading.Lock()
-"""Creates a locking method to prevent redundant API calls (or 2 calls at once)"""
+"""Creates a locking method to prevent multiple API calls stacking"""
 
 
 ### Config ###
+
 
 Config = configparser.ConfigParser(comment_prefixes = ["/", "#"], allow_no_value = True)
 """The configuration file reader"""
@@ -94,9 +95,13 @@ if runBot:
 if enableBot:
     # if the bot is enabled
     webHost =  socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # creates the base webHost socket (defines)
+    webHost.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # restarts sockets
     webHost.bind(("127.0.0.1", 6666))
-    webHost.listen(1)
-    # creates a websocket connection on localhost
+    # sets the address and port
+    webHost.listen()
+    # creates a websocket listener connection on localhost
     print(f"{Time()}[PTP]: Started inter-python connection")
     # debug print
 
@@ -106,16 +111,14 @@ sp_client_secret = Config.get("Required", "spotify_Client_Secret")
 """The Spotify Secret from Developer Dashboard (string)"""
 sp_redirect = Config.get("Required", "http_Redirect")
 """The Spotify redirect URL from Developer Dashboard"""
-
 sp_cache = os.path.join(directory, "Data", "spotifycache.json")
 """The directory where the spotify cache (token) sits in"""
-
 
 if len(sp_client_secret) > 5:
     # checks if the client secret has at least 5 characters
     None
 else:
-    print(f"{Time()}[ERROR]: Required info not found in config.ini, please enter and try again")
+    print(f"{Time()}[ERROR]: Required info not found in config.ini, please enter the identifiers and try again")
     time.sleep(30)
     raise SystemExit
 
@@ -157,6 +160,12 @@ oldCount = 0
 trackCounter = 0
 """A counter to track the current song's 'ID'"""
 
+songColorHex = textColorHex = barColorHex = overlayColorHex = None
+"""Saves all the colors as empty, so that they can hold hex codes later"""
+
+callSong = False
+"""A check to see if song() should be called regardless of song change state (due to a color change)"""
+
 
 
 ### Spotify Data Grabber Function ###
@@ -180,7 +189,7 @@ def authPlayback():
 
         for attempt in range(3):
             # tries a max of 3 times to get Spotify data (typically succeeds 1st try, so if it doesn't work in 3, there's a bigger issue)
-
+            
             try:
                 # first tries to send an API request to Spotify
                 
@@ -213,6 +222,12 @@ def authPlayback():
                     # sets the tokenRefresh mode to true so it prints the token text on success
                     internalError = False
                     # sets the flag to false
+
+                elif isinstance(error, requests.exceptions.ReadTimeout):
+                    # if the error is a read timeout (sort of random)
+                    print(f"{Time()}[ERROR]: Spotify API timeout, retrying in 5 seconds ({attempt+1}/3)")
+                    time.sleep(2)
+                    # sleeps for 2 seconds (because there's a function-wide 3-second cooldown added on top)
 
                 elif isinstance(error, SpotifyException) and error.http_status == 500:
                     # if the error is 500 (internal error fail)
@@ -254,58 +269,75 @@ def authPlayback():
 
 def webHostListener():
     """Websocket message host/listener"""
-
-    client_socket, client_address = webHost.accept()
-    # waits for a client connection
-    print(f"{Time()}[PTP]: Inter-python-connection made")
-    # prints a Python to Python (Peer to Peer) inform
+    print(f"{Time()}[PTP]: Waiting for SBO-Bot to connect")
+    # prints the message on program start
 
     while True:
-        # while the program is running
-        rawMessage = client_socket.recv(1024)
-        # grabs any messages sent (1024 bytes, shouldn't use more than a few)
+        client_socket, client_address = webHost.accept()
+        # waits for a client connection
+        print(f"{Time()}[PTP]: SBO-Bot connected")
+        # prints a Python to Python (Peer to Peer) inform when Bot connects successfully
 
-        if rawMessage:
-            # if there's a message
-            message = rawMessage.decode()
-            # decodes it (bytes -> string)
+        while True:
+            # while the program is running
+            rawMessage = client_socket.recv(1024)
+            # grabs any messages sent (1024 bytes, shouldn't use more than a few)
+
+            if not rawMessage:
+                # if the message is empty (disconnect)
+                break
+                # breaks to reset the connection
+
+            message = rawMessage.decode().strip()
+            # decodes it (bytes -> string) and strips empty space
 
             print(f"{Time()}[PTP]: Command received:", message)
             # prints a Python to Python (Peer to Peer) inform
 
-            if message == "Skip":
-                # if the message is skip
-                skip()
-                # calls the skip function
-            elif message == "Pause":
-                # if the message is pause
-                pause()
-                # calls the pause function
-            elif message == "Resume":
-                # if the message is resume
-                resume()
-                # calls the resume function
-            elif message == "Previous":
-                # if the message is previous
-                previous()
-                # calls the previous function
-
-            elif message.startswith("Queue:"):
-                # if the message starts with "Queue:"
-                x, uri = message.split(" ", 1)
-                # splits the message to first and second halves by the first space (just after "Queue: "")
-                queue(uri)
-                # calls the queue function with the URI
-
-            else:
-                # if the command isn't recognized
-                print("Unknown command passed via PTP")
+            botCommand(message)
+            # calls botCommand with the decoded and stripped message
 
 
 
-### Spotify Actions ###
+### Bot Commands ###
 
 
+
+def botCommand(command: str):
+    """Helper function to pick what control function to call"""
+    playbackCommands = {
+        "Skip": skip,
+        "Pause": pause,
+        "Resume": resume,
+        "Previous": previous,
+    }
+    # list of playback controlling commands
+
+    if command in playbackCommands:
+        # if the command is one of the playback controls
+        playbackCommands[command]()
+        # constructs a call dynamically from the command and calls the function
+        return
+        # stops checks
+
+    if command.startswith("Queue:"):
+        # if the command starts with "queue"
+        x, uri = command.split(" ", 1)
+        # splits the command into scrap (command) and the URI to pass
+        queue(uri)
+        return
+        # stops checks
+
+    if command.startswith(("Song Color:", "Text Color:", "Bar Color:", "Overlay Color:")):
+        func, color = command.split(": ", 1)
+        # splits the command into the function and the color to pass
+        colorChanger(func, color)
+        # calls the colorChanger with the parsed function and color as parameters
+        return
+        # stops cheks
+    
+    print(f"{Time()}[PTP]: Unknown command:", command)
+    # if the command is somehow not recognized (shouldn't ever happen, but this way won't break)
 
 def skip():
     """Skips to next song"""
@@ -338,6 +370,7 @@ def resume():
         # print if there's an error
 
 def previous():
+    """Goes back to previous song"""
     try:
         main.previous_track()
         print(f"{Time()}[SBOT]: Previous song")
@@ -347,6 +380,7 @@ def previous():
         # print if there's an error
 
 def queue(link):
+    """Queues a given song via Spotify link"""
     try:
         main.add_to_queue(link)
         print(f"{Time()}[SBOT]: Song added to queue")
@@ -354,6 +388,79 @@ def queue(link):
     except:
         print(f"{Time()}[SBOT]: Error adding to queue")
         # print if there's an error (shouldn't be a type error since SBO-Bot checks type before sending)
+
+
+
+def colorChanger(func, color):
+    """Helper function to call the correct color changer function"""
+    global callSong
+    # grabs the boolean from global -> local
+
+    colorFunctions = {
+        "Song Color": songColor,
+        "Text Color": textColor,
+        "Bar Color": barColor,
+        "Overlay Color": overlayColor
+    }
+    # stores all the color-related functions in a map
+
+    if color != "clear" and not color.startswith("#"):
+        # checks if the color already has a # and that it isn't "clear"
+        color = "#" + color
+        # if not, adds the # (needed to pass hex values to HTML)
+
+    colorFunctions[func](color)
+    # calls a function based on the parameters
+    callSong = True
+    # turns the flag to call song() to True (tells looper to run a song() instance regardless of song update)
+
+def songColor(color):
+    """Changes the color of the song text"""
+    global songColorHex
+    if color == "clear":
+        songColorHex = "Clear"
+        # sets the field to "Clear" so that SBO-WS can add the default value
+        print(f"{Time()}[RGBA]: Song text color cleared")
+    else:
+        songColorHex = color
+        # sets the color to match
+        print(f"{Time()}[RGBA]: Song text color set to: {color}")
+
+def textColor(color):
+    """Changes the color of the overlay text"""
+    global textColorHex
+    if color == "clear":
+        textColorHex = "Clear"
+        # sets the field to "Clear" so that SBO-WS can add the default value
+        print(f"{Time()}[RGBA]: Text color cleared")
+    else:
+        textColorHex = color
+        # sets the color to match
+        print(f"{Time()}[RGBA]: Text color set to: {color}")
+
+def barColor(color):
+    """Changes the color of the progress bar"""
+    global barColorHex
+    if color == "clear":
+        barColorHex = "Clear"
+        # sets the field to "Clear" so that SBO-WS can add the default value
+        print(f"{Time()}[RGBA]: Progress bar color cleared")
+    else:
+        barColorHex = color
+        # sets the color to match
+        print(f"{Time()}[RGBA]: Progress bar color set to: {color}")
+
+def overlayColor(color):
+    """Changes the color of the overlay borders"""
+    global overlayColorHex
+    if color == "clear":
+        overlayColorHex = "Clear"
+        # sets the field to "Clear" so that SBO-WS can add the default value
+        print(f"{Time()}[RGBA]: Overlay color cleared")
+    else:
+        overlayColorHex = color
+        # sets the color to match
+        print(f"{Time()}[RGBA]: Overlay color set to: {color}")
 
 
 
@@ -393,7 +500,7 @@ def runSBOBot():
 
 def song():
     """The function that handles all song data gathering and parsing, as well as pushing to C++ via text"""
-    global currentInfo, trackCounter, oldCount
+    global currentInfo, trackCounter, oldCount, songColorHex, textColorHex, barColorHex, overlayColorHex
     # pulls some global variables to local
 
     while True:
@@ -516,13 +623,13 @@ def song():
             # stores the list that contains the playlist url
             csAlbumURLs = csAlbum.get("external_urls")
             # stores the album urls 
-            ttvAlbumURL = csAlbumURLs.get("spotify")
+            sboAlbumURL = csAlbumURLs.get("spotify")
             # gets the spotify url 
 
         else:
             # if the song is local
             csURL = "A local song"
-            ttvAlbumURL = "A local album"
+            sboAlbumURL = "A local album"
 
         if csPlaylist != None:
             # checks if user is playing a playlist
@@ -534,44 +641,50 @@ def song():
         else:
             # if there's no playlist
             csPlaylistURL = "No playlist"
+            csPlaylist = "No playlist"
 
         songNameList.append(csName)
         # adds the song name to list
         
-        ttvSongName = " ".join(songNameList)
+        sboSongName = " ".join(songNameList)
         # joins together the list (just paused state + song name)
 
-        ttvArtistName = csArtistName
+        sboArtistName = csArtistName
         # assigns the artist name
 
-        ttvAlbumName = csAlbumName
+        sboAlbumName = csAlbumName
         # assigns the album name
 
-        ttvURL = csURL
+        sboURL = csURL
         # assigns the URL (this is the Spotify track URL)
 
 
-        ### TTV Text File Writer ###
+        ### SBO-WS Text File Writer ###
 
 
-        ttvFull = (
-                    f"Song Name = {ttvSongName}\n"
-                    f"Artist Name = {ttvArtistName}\n"
-                    f"Album Name = {ttvAlbumName}\n"
-                    f"Album URL = {ttvAlbumURL}\n" 
-                    f"Spotify URL = {ttvURL}\n"
+        sboFull = (
+                    f"Song Name = {sboSongName}\n"
+                    f"Artist Name = {sboArtistName}\n"
+                    f"Album Name = {sboAlbumName}\n"
+                    f"Album URL = {sboAlbumURL}\n" 
+                    f"Spotify URL = {sboURL}\n"
                     f"Spotify Image = {csCover}\n"
+                    f"Playlist Name = {csPlaylist}\n"
                     f"Playlist URL = {csPlaylistURL}\n"
                     f"UNIX Start = {str(csUnixStart)}\n"
                     f"UNIX End = {str(csUnixEnd)}\n"
                     f"Pause State = {str(paused)}\n"
-                    f"Track ID = {str(trackCounter)}" 
+                    f"Track ID = {str(trackCounter)}\n"
+                    f"Song Color = {songColorHex}\n"
+                    f"Text Color = {textColorHex}\n"
+                    f"Bar Color = {barColorHex}\n"
+                    f"Overlay Color = {overlayColorHex}\n"
                     )
-        # merges all the song information together, split by newlines
+        # merges all the song/color/other information together, split by newlines
 
         with open(sbotxtPath, "w", encoding="utf-8") as txt:
             # opens the songData text file
-            txt.write(ttvFull)
+            txt.write(sboFull)
             # writes the full song information to the text file
             print(f"{Time()}[INFO]: Song data file updated")
             # prints an update
@@ -587,8 +700,8 @@ def song():
 
 def looper():
     """Function that checks song info on a loop"""
-    global currentURI, currentInfo, pauseUpdated, trackCounter
-    # grabs the "global" variable (outside the function) as a local variables
+    global currentURI, currentInfo, pauseUpdated, trackCounter, callSong
+    # grabs the "global" variables (outside the function) as local variables
     while True:
         # this loop checks if the song playing is the same as the previous update, waits if yes, updates the song to match if not
 
@@ -638,7 +751,7 @@ def looper():
 
             if not pauseUpdated:
                 # if console updates are enabled and this change wasn't triggered by a pause
-                print(f"\n{Time()}[SONG]: New song detected: {songName}, duration: {songDur:,.0f} seconds")
+                print(f"\n{Time()}[SONG]: New song: {songName}, duration: {songDur:,.0f} seconds")
                 # user update on new song (makes a new line before itself so it separates tracks)
             elif pauseUpdated:
                 # if console updates are enabled and this change *was* triggered by a pause
@@ -650,6 +763,8 @@ def looper():
             # changes timestamp variable to match
             songEvent.set()
             # sets an event to make song() update the text file
+            callSong = False
+            # if a new song is set, it'll run the song() normally, no need to separately run
 
             if pauseUpdated:
                 # if it's playing and the pauseUpdate has been set to true
@@ -668,13 +783,22 @@ def looper():
         if not playing and not pauseUpdated and currentURI == songURI:
         # if the song is paused, hasn't yet updated the pause state *and* the song is the same
             songEvent.set()
-            # sets an event to make song() update the text file (this way it doesn't spam)
+            # sets an event to make song() update the text file
+            callSong = False
+            # if song() gets called anyway, no need to separately run
             pauseUpdated = True
             # sets the pause check to True, meaning it has been checked and acted on
             print(f"\n{Time()}[SONG]: Paused on: {songName}")
             # user inform (new line to split from main updates, only prints once anyway)
             sleepfor = 2
             # sets the sleep timer to the config-set refresh time
+
+        if callSong:
+            # if there's a callSong request from colorChanger, and both checks passed (no new song, no pause state)
+            songEvent.set()
+            # sets an event to make song() update the text file
+            callSong = False
+            # turns off so it doesn't call again
 
         else:
         # if the current song is the same, and is not paused

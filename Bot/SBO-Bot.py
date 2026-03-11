@@ -1,5 +1,5 @@
-import configparser, os, sys, threading
-# Required for basic function and getting the config options for bot
+import configparser, os, sys, time
+# Required for basic OS/system function and getting the config options for bot
 import asyncio, asqlite, socket, aiohttp
 # Required to connect to the bot
 import twitchio, logging
@@ -11,6 +11,10 @@ from twitchio import ChatMessage
 from twitchio.ext import commands
 from twitchio.ext.commands import Command
 # Required to use commands in chat
+from twitchio.ext.commands.exceptions import CommandOnCooldown, CommandNotFound, MissingRequiredArgument
+# Required to handle TwitchIO command errors without massive error logs
+from twitchio.ext.commands.cooldowns import Bucket
+# Required to manage cooldown types (chatter/channel) easier
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import sqlite3
@@ -22,7 +26,7 @@ if TYPE_CHECKING:
 
 
 
-SBO_Bot_ver = "v0.3.10.0900"
+SBO_Bot_ver = "v0.3.11.1040"
 """The SBO Bot version (y.m.dd.hhmm)"""
 
 
@@ -72,12 +76,11 @@ ConfigPath = os.path.join(directory, "..", "config.ini")
 Config.read(ConfigPath, "utf8")
 # Where the config is read from, with UTF-8 format
 
-commandPrefix = Config.get("Twitch-Bot", "command_Prefix")
+commandPrefix = Config.get("Twitch-Bot", "command_Prefix", fallback="!")
 """The symbol or string to use in front of all commands (string)"""
-if not commandPrefix:
-    # ensures the command prefix is set
-    commandPrefix = "!"
-    # sets to default of ! if not (program will not like an empty string)
+
+cooldownMessage = Config.getboolean("Twitch-Bot", "enable_Cooldown_Messages", fallback=False)
+"""Whether to reply to chatter with a cooldown message if command is on cooldown"""
 
 bot_Client_ID = Config.get("Twitch-Bot", "dev_Client_ID")
 """The Twitch Client ID from config"""
@@ -104,116 +107,73 @@ except:
     # this will trip the check at the bottom and stop the program
 
 
-
 ### Command Configuration ###
 
 
-
-CommandConfig = configparser.ConfigParser(comment_prefixes= ["/", "#"], allow_no_value= True)
-"""The Command configuration file reader"""
+chatCommandConfig = configparser.ConfigParser(comment_prefixes= ["/", "#"], allow_no_value= True)
+"""The command configuration file reader"""
 CmdCfgPath = os.path.join(directory, "commandConfig.ini")
 """The directory where the commandConfig sits in"""
-CommandConfig.read(CmdCfgPath, "utf8")
+chatCommandConfig.read(CmdCfgPath, "utf8")
 # Where the command config is read from, with UTF-8 format
 
+defaultConfig = {
+    "Playlist":      {"enable": True, "cooldown_Chatter": 600, "cooldown_Channel": 60, "required_Level": "all"},
+    "Album":         {"enable": True, "cooldown_Chatter": 300, "cooldown_Channel": 30, "required_Level": "all"},
+    "Song":          {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 30, "required_Level": "all"},
+    "Pause":         {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
+    "Resume":        {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
+    "Skip":          {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
+    "Previous":      {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
+    "Queue":         {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
+    "Song Color":    {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
+    "Text Color":    {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
+    "Bar Color":     {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
+    "Overlay Color": {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
+}
+# a map of the default loaded settings 
 
-### Playlist ###
-enablePlaylist = CommandConfig.getboolean("Playlist", "enable", fallback=True)
-"""Whether playlist command is enabled (boolean)"""
-playlist_CD_chatter = CommandConfig.getint("Playlist", "cooldown_Chatter", fallback=600)
-"""The cooldown applied per user (1/x, int)"""
-playlist_CD_channel = CommandConfig.getint("Playlist", "cooldown_Channel", fallback=60)
-"""The cooldown applied channel-wide (1/x, int)"""
-playlistLevel = CommandConfig.get("Playlist", "required_Level", fallback="all").lower()
-"""The level required to use the command (string) - ID 0"""
+commandOptions = {}
+"""The stored command options from commandConfig.ini
+    - Called with commandOptions["Command Name"]["Option"]
+    - Valid options: enable, cooldown_Chatter, cooldown_Channel, required_Level"""
 
-### Album ###
-enableAlbum = CommandConfig.getboolean("Album", "enable", fallback=True)
-"""Whether album command is enabled (boolean)"""
-album_CD_chatter = CommandConfig.getint("Album", "cooldown_Chatter", fallback=300)
-"""The cooldown applied per user (1/x, int)"""
-album_CD_channel = CommandConfig.getint("Album", "cooldown_Channel", fallback=30)
-"""The cooldown applied channel-wide (1/x, int)"""
-albumLevel = CommandConfig.get("Album", "required_Level", fallback="all").lower()
-"""The level required to use the command (string) - ID 1"""
+for command, defaults in defaultConfig.items():
+    # goes through every command's options in the defaultConfig map
+    section = command
+    # sets the section name as the current command 
+    commandOptions[command] = {
+        "enable": chatCommandConfig.getboolean(section, "enable", fallback = defaults["enable"]),
+        "cooldown_Chatter": chatCommandConfig.getint(section, "cooldown_Chatter", fallback = defaults["cooldown_Chatter"]),
+        "cooldown_Channel": chatCommandConfig.getint(section, "cooldown_Channel", fallback = defaults["cooldown_Channel"]),
+        "required_Level": chatCommandConfig.get(section, "required_Level", fallback = defaults["required_Level"]).lower(),
+    }
+    # stores the config options from the config file (falls back to defaultConfig's default values in case one isn't found)
 
-### Song ###
-enableSong = CommandConfig.getboolean("Song", "enable", fallback=True)
-"""Whether song/track command is enabled (boolean)"""
-song_CD_chatter = CommandConfig.getint("Song", "cooldown_Chatter", fallback=180)
-"""The cooldown applied per user (1/x, int)"""
-song_CD_channel = CommandConfig.getint("Song", "cooldown_Channel", fallback=30)
-"""The cooldown applied channel-wide (1/x, int)"""
-songLevel = CommandConfig.get("Song", "required_Level", fallback="all").lower()
-"""The level required to use the command (string) - ID 2"""
-
-### Pause ###
-enablePause = CommandConfig.getboolean("Pause", "enable", fallback=True)
-"""Whether pause command is enabled (boolean)"""
-pause_CD_chatter = CommandConfig.getint("Pause", "cooldown_Chatter", fallback=180)
-"""The cooldown applied per user (1/x, int)"""
-pause_CD_channel = CommandConfig.getint("Pause", "cooldown_Channel", fallback=60)
-"""The cooldown applied channel-wide (1/x, int)"""
-pauseLevel = CommandConfig.get("Pause", "required_Level", fallback="vip").lower()
-"""The level required to use the command (string) - ID 3"""
-
-### Resume ###
-enableResume = CommandConfig.getboolean("Resume", "enable", fallback=True)
-"""Whether resume command is enabled (boolean)"""
-resume_CD_chatter = CommandConfig.getint("Resume", "cooldown_Chatter", fallback=180)
-"""The cooldown applied per user (1/x, int)"""
-resume_CD_channel = CommandConfig.getint("Resume", "cooldown_Channel", fallback=60)
-"""The cooldown applied channel-wide (1/x, int)"""
-resumeLevel = CommandConfig.get("Resume", "required_Level", fallback="vip").lower()
-"""The level required to use the command (string) - ID 4"""
-
-### Skip ###
-enableSkip = CommandConfig.getboolean("Skip", "enable", fallback=True)
-"""Whether skip command is enabled (boolean)"""
-skip_CD_chatter = CommandConfig.getint("Skip", "cooldown_Chatter", fallback=180)
-"""The cooldown applied per user (1/x, int)"""
-skip_CD_channel = CommandConfig.getint("Skip", "cooldown_Channel", fallback=60)
-"""The cooldown applied channel-wide (1/x, int)"""
-skipLevel = CommandConfig.get("Skip", "required_Level", fallback="vip").lower()
-"""The level required to use the command (string) - ID 5"""
-
-### Previous ###
-enablePrevious = CommandConfig.getboolean("Previous", "enable", fallback=True)
-"""Whether previous command is enabled (boolean)"""
-previous_CD_chatter = CommandConfig.getint("Previous", "cooldown_Chatter", fallback=180)
-"""The cooldown applied per user (1/x, int)"""
-previous_CD_channel = CommandConfig.getint("Previous", "cooldown_Channel", fallback=60)
-"""The cooldown applied channel-wide (1/x, int)"""
-previousLevel = CommandConfig.get("Previous", "required_Level", fallback="vip").lower()
-"""The level required to use the command (string) - ID 6"""
-
-### Queue ###
-enableQueue = CommandConfig.getboolean("Queue", "enable", fallback=True)
-"""Whether queue command is enabled (boolean)"""
-queue_CD_chatter = CommandConfig.getint("Queue", "cooldown_Chatter", fallback=180)
-"""The cooldown applied per user (1/x, int)"""
-queue_CD_channel = CommandConfig.getint("Queue", "cooldown_Channel", fallback=60)
-"""The cooldown applied channel-wide (1/x, int)"""
-queueLevel = CommandConfig.get("Queue", "required_Level", fallback="vip").lower()
-"""The level required to use the command (string) - ID 7"""
-
+print(f"Bot command configuration loaded successfully", flush=True)
+# user inform that config succeeded
 
 ### Command Level Mapping ###
 
-
-commandLevels = [playlistLevel, 
-                 albumLevel, 
-                 songLevel, 
-                 pauseLevel, 
-                 resumeLevel, 
-                 skipLevel, 
-                 previousLevel, 
-                 queueLevel]
+commandLevels = [
+                commandOptions["Playlist"]["required_Level"], 
+                commandOptions["Album"]["required_Level"], 
+                commandOptions["Song"]["required_Level"], 
+                commandOptions["Pause"]["required_Level"], 
+                commandOptions["Resume"]["required_Level"], 
+                commandOptions["Skip"]["required_Level"], 
+                commandOptions["Previous"]["required_Level"], 
+                commandOptions["Queue"]["required_Level"],
+                commandOptions["Song Color"]["required_Level"],
+                commandOptions["Text Color"]["required_Level"],
+                commandOptions["Bar Color"]["required_Level"],
+                commandOptions["Overlay Color"]["required_Level"]
+                ]
 """A list of all the command requirement levels"""
 # takes all the user level requirement variables and puts into a list
 
 commandLevelList = []
-"""A list of command levels, in number format (1-6 with 3 fallback)"""
+"""A list of command levels, in number format (1 - 6, fallback = 3)"""
 # creates an empty list to append numbers into below
 
 for i in commandLevels:
@@ -241,20 +201,29 @@ for i in commandLevels:
         # if the command level is none of the above, assigns default fallback of 4 (Moderator), to prevent accidentally allowing unwanted control
 
 permissionMap = {
-    "playlist": commandLevelList[0],
-    "album": commandLevelList[1],
-    "song": commandLevelList[2],
-    "pause": commandLevelList[3],
-    "resume": commandLevelList[4],
-    "skip": commandLevelList[5],
-    "previous": commandLevelList[6],
-    "queue": commandLevelList[7]
-}
-"""A map of required levels to use each command (0-6), based on the command's internal ID (0 ->)"""
+                "Playlist": commandLevelList[0],
+                "Album": commandLevelList[1],
+                "Song": commandLevelList[2],
+                "Pause": commandLevelList[3],
+                "Resume": commandLevelList[4],
+                "Skip": commandLevelList[5],
+                "Previous": commandLevelList[6],
+                "Queue": commandLevelList[7],
+                "Song Color": commandLevelList[8],
+                "Text Color": commandLevelList[9],
+                "Bar Color": commandLevelList[10],
+                "Overlay Color": commandLevelList[11]
+                }
+"""A map of required levels to use each command (0-6)"""
 # stores each of the command's required use level as a permission map that can be called by isCoolChatter to check
 
-
-if any([enablePause,enableResume,enableSkip,enablePrevious,enableQueue]):
+if any([
+        commandOptions["Pause"]["enable"],
+        commandOptions["Resume"]["enable"],
+        commandOptions["Skip"]["enable"],
+        commandOptions["Previous"]["enable"],
+        commandOptions["Queue"]["enable"]
+    ]):
     # checks if any of the "playback control" commands are enabled
     playbackControls = True
     # sets playbackControls to True if any are (this just tells the startup print what to display, debug/QoL)
@@ -269,59 +238,25 @@ else:
 
 
 
-webClient = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-# sets up the webclient socket
-webClient.connect(("127.0.0.1", 6666))
-# creates a socket connection on localhost
-print(f"Attempting to connect to PTP", flush=True)
-# (debug) print
-
-def dataPasser(command: str, uri: str):
+def dataPasser(command: str, arg2: str):
     """A function to send commands to SBO (takes the command and spotify URI/URL as parameters)"""
-
-    if command == "skip":
-        # if the command is skip
-        msg = "Skip"
-        webClient.send(msg.encode())
-        # sends a message to SBO to skip
-        return "Skipped"
-        # sends the response back to the bot so it can reply
-
-    elif command == "pause":
-        # if the command is pause
-        msg = "Pause"
-        webClient.send(msg.encode())
-        # sends a message to SBO to pause
-        return "Paused"
-        # sends the response back to the bot so it can reply
-    
-    elif command == "resume":
-        # if the command is resume
-        msg = "Resume"
-        webClient.send(msg.encode())
-        # sends a message to SBO to resume
-        return "Resumed"
-        # sends the response back to the bot so it can reply
-
-    elif command == "previous":
-        # if the command is previous
-        msg = "Previous"
-        webClient.send(msg.encode())
-        # sends a message to SBO to pause
-        return "Went back"
-        # sends the response back to the bot so it can reply
-
-    elif command == "queue":
-        # if the command has queue (means it has a link, too)
-        msg = f"Queue: {uri}"
-        webClient.send(msg.encode())
-        # sends the link 
-        return "Queued song"
-        # sends the response back to the bot so it can reply
-    
+    if arg2 == "":
+        # if the second argument is empty (is just a playback command, eg. skip)
+        msg = command
+        # creates a message from just the command
     else:
-        print(f"Playback control ready", flush=True)
-        # indicates that the playback control has been started (since the run sends bs parameters)
+        # if the second argument isn't empty (means there's a link or color attached)
+        msg = f"{command}: {arg2}"
+        # creates a string from the command and argument (uri/url/color...) 
+    print(f"Sending command via PTP")
+    # user inform
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as webClient:
+    # starts a new connection (with the same parameters)
+        webClient.connect(("127.0.0.1", 6666))
+        # connects to the existing host
+        webClient.sendall(msg.encode())
+        # sends the message
 
 
 
@@ -362,7 +297,7 @@ def getData():
 def isCoolChatter():
     """Function to check if the calling chatter is authorised to use sent command"""
     def chatterChecker(sender, command):
-        """Helper function, takes the sent message's context and the command as parameter"""
+        """Helper function, takes the sent message's context and the command as parameters"""
         chatter = sender.author
         # assigns the message sender's author as "chatter"
         reqLevel = permissionMap.get(command)
@@ -397,21 +332,22 @@ def isCoolChatter():
         if reqLevel <= currentLevel:
             # if the required level is lower or equal to the current chatter's level
             return True
-            # tells isCoolChatter() the chatter is, in fact, cool
+            # tells isCoolChatter() the chatter is, in fact, cool enough
         else:
             return False
-            # tells isCoolChatter() the chatter, unfortunately, isn't cool :(
+            # tells isCoolChatter() the chatter, unfortunately, isn't cool enough :(
 
     return chatterChecker
     # returns the result to calling command
 
         
 
-
 ### Bot Class ###
 
 
+
 class Bot(commands.AutoBot):
+    """Bot setup class, handles all variable assignments"""
     def __init__(self, *, token_database: asqlite.Pool, subs: list[eventsub.SubscriptionPayload]) -> None:
         self.token_database = token_database
 
@@ -430,17 +366,34 @@ class Bot(commands.AutoBot):
         self.botName = botName
         # stores the botname as a class variable (used for a print)
 
+### Command Error ###
+
+    async def event_command_error(self, context: commands.Context, error: commands.CommandError):
+        """Handles Twitch(IO) command errors"""
+        if isinstance(error, commands.CommandNotFound):
+            # if the command returns a "command not found"
+            return
+            # doesn't return anything, because it's expected behavior
+
+        if isinstance(error, commands.MissingRequiredArgument):
+            # if there's a missing
+            await context.reply(f"Missing parameter")
+            # sends a parameter message
+            return
+        
+        print(f"Error handling {context.command}: {error}", flush=True)
+        # logs an error if it's something else
+
 ### Live Check ###
 
     async def liveCheck(self, channelID: str) -> bool:
-        # checks if the channel is live (shouldn't be able to use playback commands if offline)
+        """Function that checks if the given twitch channel is live"""
         channelURL = f"https://api.twitch.tv/helix/streams?user_login={channelID}"
         # creates a url for the channel in question
         urlHeader = {
             "Client-ID": bot_Client_ID
         }
-        # constructs the header with the bot client ID
-
+        # constructs the header with the bot client ID (this is what it uses to make an api request)
         async with aiohttp.ClientSession() as session:
             # starts an aio client to connect to Twitch API
             async with session.get(channelURL, headers=urlHeader) as reply:
@@ -452,15 +405,13 @@ class Bot(commands.AutoBot):
                     return True
                     # returns true, which sets the boolean for live to true
                 else:
-                    return True
-                    # if data key doesn't exist or is empty
-                    # return False
-                    # returns false, which keeps the boolean for channelLive false, disallowing commands that require it
+                    return False
+                    # if data key doesn't exist or is empty - returns false, which keeps channelLive false, disallowing commands that require it
 
 ### Check Status of Live Check ###
 
     async def checkLiveCheck(self):
-        # runs liveCheck every minute to see if the channel is live
+        """Function that gets callled to run liveCheck every minute to see if the channel is live"""
         logged = False
         # sets a boolean to check if the status has been logged already
         while True:
@@ -554,6 +505,59 @@ class Bot(commands.AutoBot):
 
 
 
+### Cooldown Manager ###
+
+
+
+class CooldownManager:
+    """Class that hosts a cooldown management function"""
+    def __init__(self):
+        self.chatterCDs = {}
+        # tracks the per-chatter cooldowns (key = chatterID, command) (timestamp)
+        self.channelCDs = {}
+        # tracks the per-channel cooldowns (key = channel, command) (timestamp)
+
+    async def cooldownCheck(self, context, chatterCDTime: int, channelCDTime: int):
+        """Function to check the cooldown - takes the context (message), the user cooldown (int) and channel cooldown (int)"""
+        chatterStatus = context.author
+        # stores the chatter's "status" (details)
+        now = int(time.time())
+        # stores the current UNIX time (in seconds)
+        chatterKey = (context.author.id, context.command.name)
+        # stores the chatter's ID and the command used
+        channelKey = (context.channel.name, context.command.name)
+        # stores the channel's name and the command used
+
+        if chatterStatus.broadcaster:
+            # checks if the chatter is the streamer
+            return True
+            # skips everything and returns True (no cooldown for streamer)
+
+        chatterCD = self.chatterCDs.get(chatterKey, 0)
+        # gets the last time the chatter in question ran the command (0 if none is found)
+
+        if now - chatterCD < chatterCDTime:
+        # if (the current time - chatter cooldown duration) is less than the config-set cooldown:
+            return False
+            # returns false (meaning cooldown isn't done yet)
+
+        channelCD = self.channelCDs.get(channelID, 0)
+        # gets the last time *anyone* used the command (0 if none is found)
+
+        if now - channelCD < channelCDTime:
+        # if (the current time - channel cooldown duration) is less than the config-set cooldown:
+            return False
+            # returns false (cooldown isn't done)
+
+        self.chatterCDs[chatterKey] = now
+        # sets the last time the user ran the command to match current time
+        self.channelCDs[channelKey] = now
+        # sets the last time the command was run to match the current time
+        return True
+        # if neither prior "return"s triggered, that means the command is off-cooldown and can be run - returns True
+
+
+
 ### Commands Component of Bot ###
 
 
@@ -566,6 +570,8 @@ class CommandComponent(commands.Component):
     def __init__(self, bot: Bot) -> None:
         self.bot = bot
         # passes the bot class
+        self.cooldowns = CooldownManager()
+        # instantiates the cooldown manager
         super().__init__()
 
 ### Listener ###
@@ -577,14 +583,22 @@ class CommandComponent(commands.Component):
 ### Playlist ###
 
     @commands.command()
-    @commands.cooldown(rate=1, per=playlist_CD_channel, key=commands.BucketType.channel)
-    @commands.cooldown(rate=1, per=playlist_CD_chatter, key=commands.BucketType.chatter)
     async def playlist(self, context: commands.Context) -> None:
         """playlist"""
 
-        if self.bot.channelLive and enablePlaylist:
+        if self.bot.channelLive and commandOptions["Playlist"]["enable"]:
         # checks if the channel is live and the command is enabled
-            if isCoolChatter()(context, "playlist"):
+
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Playlist"]["cooldown_Chatter"], commandOptions["Playlist"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+                    
+            if isCoolChatter()(context, "Playlist"):
                 sbo = getData()
                 # calls the data grabber to get the package (dictionary)
                 playlist = sbo.get("Playlist URL")
@@ -602,14 +616,22 @@ class CommandComponent(commands.Component):
 ### Album ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=album_CD_channel, key=commands.BucketType.channel)
-    @commands.cooldown(rate = 1, per=album_CD_chatter, key=commands.BucketType.chatter)
     async def album(self, context: commands.Context) -> None:
         """album"""
 
-        if self.bot.channelLive and enableAlbum:
+        if self.bot.channelLive and commandOptions["Album"]["enable"]:
         # checks if the channel is live and the command is enabled
-            if isCoolChatter()(context, "album"):
+
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Album"]["cooldown_Chatter"], commandOptions["Album"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter()(context, "Album"):
                 sbo = getData()
                 # calls the data grabber to get the package (dictionary)
                 album = sbo.get("Album URL")
@@ -627,14 +649,22 @@ class CommandComponent(commands.Component):
 ### Song ###
 
     @commands.command(aliases=["song"])
-    @commands.cooldown(rate = 1, per=song_CD_channel, key=commands.BucketType.channel)
-    @commands.cooldown(rate = 1, per=song_CD_chatter, key=commands.BucketType.chatter)
     async def track(self, context: commands.Context) -> None:
         """track and song"""
 
-        if self.bot.channelLive and enableSong:
+        if self.bot.channelLive and commandOptions["Song"]["enable"]:
         # checks if the channel is live and the command is enabled
-            if isCoolChatter()(context, "song"):
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Song"]["cooldown_Chatter"], commandOptions["Song"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter()(context, "Song"):
                 sbo = getData()
                 # calls the data grabber to get the package (dictionary)
                 track = sbo.get("Song Name")
@@ -660,16 +690,24 @@ class CommandComponent(commands.Component):
 ### Skip ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=skip_CD_channel, key=commands.BucketType.channel)
-    @commands.cooldown(rate = 1, per=skip_CD_chatter, key=commands.BucketType.chatter)
     async def skip(self, context: commands.Context) -> None:
         """skip"""
 
-        if self.bot.channelLive and enableSkip:
+        if self.bot.channelLive and commandOptions["Skip"]["enable"]:
         # checks if the channel is live and the command is enabled
-            if isCoolChatter()(context, "skip"):
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Skip"]["cooldown_Chatter"], commandOptions["Skip"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter()(context, "Skip"):
                 # checks if the permissions are met
-                dataPasser("skip", "")
+                dataPasser("Skip", "")
                 # calls the dataPasser function
                 await context.reply("Skipped")
             
@@ -679,15 +717,23 @@ class CommandComponent(commands.Component):
 ### Pause ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=pause_CD_channel, key=commands.BucketType.channel)
-    @commands.cooldown(rate = 1, per=pause_CD_chatter, key=commands.BucketType.chatter)
     async def pause(self, context: commands.Context) -> None:
         """pause"""
 
-        if self.bot.channelLive and enablePause:
+        if self.bot.channelLive and commandOptions["Pause"]["enable"]:
         # checks if the channel is live and the command is enabled
-            if isCoolChatter()(context, "pause"):
-                dataPasser("pause", "")
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Pause"]["cooldown_Chatter"], commandOptions["Pause"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter()(context, "Pause"):
+                dataPasser("Pause", "")
                 # calls the dataPasser function
 
                 await context.reply(f"Paused")
@@ -695,17 +741,25 @@ class CommandComponent(commands.Component):
 
 ### Resume ###
 
-    @commands.command(aliases=["continue"])
-    @commands.cooldown(rate = 1, per=resume_CD_channel, key=commands.BucketType.channel)
-    @commands.cooldown(rate = 1, per=resume_CD_chatter, key=commands.BucketType.chatter)
+    @commands.command(aliases=["continue", "play"])
     async def resume(self, context: commands.Context) -> None:
         """resume"""
 
-        if self.bot.channelLive and enableResume:
+        if self.bot.channelLive and commandOptions["Resume"]["enable"]:
         # checks if the channel is live and the command is enabled
-            if isCoolChatter()(context, "resume"):
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Resume"]["cooldown_Chatter"], commandOptions["Resume"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter()(context, "Resume"):
                 # checks if the permissions are met
-                dataPasser("resume", "")
+                dataPasser("Resume", "")
                 # calls the dataPasser function
 
                 await context.reply(f"Resumed")
@@ -714,16 +768,24 @@ class CommandComponent(commands.Component):
 ### Previous ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=previous_CD_channel, key=commands.BucketType.channel)
-    @commands.cooldown(rate = 1, per=previous_CD_chatter, key=commands.BucketType.chatter)
     async def previous(self, context: commands.Context) -> None:
         """previous"""
 
-        if self.bot.channelLive and enablePrevious:
+        if self.bot.channelLive and commandOptions["Previous"]["enable"]:
         # checks if the channel is live and the command is enabled
-            if isCoolChatter()(context, "previous"):
+
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Previous"]["cooldown_Chatter"], commandOptions["Previous"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter()(context, "Previous"):
                 # checks if the permissions are met
-                dataPasser("previous", "")
+                dataPasser("Previous", "")
                 # calls the dataPasser function
 
                 await context.reply(f"Went back")
@@ -732,26 +794,33 @@ class CommandComponent(commands.Component):
 ### Queue ###
 
     @commands.command()
-    @commands.cooldown(rate = 1, per=queue_CD_channel, key=commands.BucketType.channel)
-    @commands.cooldown(rate = 1, per=queue_CD_chatter, key=commands.BucketType.chatter)
     async def queue(self, context: commands.Context) -> None:
         """queue"""
 
-        if self.bot.channelLive and enableQueue:
+        if self.bot.channelLive and commandOptions["Queue"]["enable"]:
         # checks if the channel is live and the command is enabled
-            if isCoolChatter()(context, "queue"):
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Queue"]["cooldown_Chatter"], commandOptions["Queue"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter()(context, "Queue"):
                 # checks if the permissions are met
                 fullMsg = context.content
                 # gets the full message from the contents
                 try:
                     cmd, songLink = fullMsg.split(" ", 1)
-                    # splits the command, stores the link for the song as songLink
-
-                    if len(songLink) == 22 or songLink.startswith(["http:", "https:", "spotify:"]):
+                    # splits the command and link, stores link
+                    if len(songLink) == 22 or songLink.startswith(("https://open.spotify.com/", "spotify:")):
                         # must be one of: "song uri, id, or url", so it checks if the length matches an ID's 22 character length
-                        # or if the song starts with http:, https: or spotify: (signs of a URL or URI)
+                        # or if the song starts with https://open.spotify.com/ or spotify: (signs of a valid URL or track URI)
 
-                        dataPasser("queue", songLink)
+                        dataPasser("Queue", songLink)
                         # calls the dataPasser function with the link
 
                         await context.reply(f"Queued song")
@@ -762,40 +831,166 @@ class CommandComponent(commands.Component):
                     await context.reply(f"Add a valid Spotify link after !queue, please")
                     # replies to user 
 
+### Song Color ###
+
+    @commands.command(aliases=["songC"])
+    async def songColor(self, context: commands.Context) -> None:
+        """songColor / songC"""
+
+        if self.bot.channelLive and commandOptions["Song Color"]["enable"]:
+        # checks if the channel is live and the command is enabled
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Song Color"]["cooldown_Chatter"], commandOptions["Song Color"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter()(context, "Song Color"):
+                fullMsg = context.content
+                # gets the full message from the contents
+                try:
+                    cmd, color = fullMsg.split(" ", 1)
+                    # splits the command, stores the hex color code as color
+                    dataPasser("Song Color", color)
+                    # calls the dataPasser function with the color
+
+                    if color.lower() == "clear":
+                        await context.reply(f"Clearing song text color")
+                    else:
+                        await context.reply(f"Changing song text color")
+
+                except:
+                    # if the command fails
+                    await context.reply(f"Add a valid hex code after !songColor, please")
+                    # replies to user 
+
+### Text Color ###
+
+    @commands.command(aliases=["textC"])
+    async def textColor(self, context: commands.Context) -> None:
+        """textColor / textC"""
+
+        if self.bot.channelLive and commandOptions["Text Color"]["enable"]:
+        # checks if the channel is live and the command is enabled
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Text Color"]["cooldown_Chatter"], commandOptions["Text Color"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter()(context, "Text Color"):
+                fullMsg = context.content
+                # gets the full message from the contents
+                try:
+                    cmd, color = fullMsg.split(" ", 1)
+                    # splits the command, stores the hex color code as color
+                    dataPasser("Text Color", color)
+                    # calls the dataPasser function with the color
+
+                    if color.lower() == "clear":
+                        await context.reply(f"Clearing text color")
+                    else:
+                        await context.reply(f"Changing text color")
+
+                except:
+                    # if the command fails
+                    await context.reply(f"Add a valid hex code after !textColor, please")
+                    # replies to user 
+
+### Bar Color ###
+
+    @commands.command(aliases=["barC"])
+    async def barColor(self, context: commands.Context) -> None:
+        """barColor / barC"""
+
+        if self.bot.channelLive and commandOptions["Bar Color"]["enable"]:
+        # checks if the channel is live and the command is enabled
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Bar Color"]["cooldown_Chatter"], commandOptions["Bar Color"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter()(context, "Bar Color"):
+                fullMsg = context.content
+                # gets the full message from the contents
+                try:
+                    cmd, color = fullMsg.split(" ", 1)
+                    # splits the command, stores the hex color code as color
+                    dataPasser("Bar Color", color)
+                    # calls the dataPasser function with the color
+
+                    if color.lower() == "clear":
+                        await context.reply(f"Clearing progress bar color")
+                    else:
+                        await context.reply(f"Changing progress bar color")
+
+                except:
+                    # if the command fails
+                    await context.reply(f"Add a valid hex code after !barColor, please")
+                    # replies to user 
+
+### Overlay Color ###
+
+    @commands.command(aliases=["overlayC"])
+    async def overlayColor(self, context: commands.Context) -> None:
+        """overlayColor / overlayC"""
+
+        if self.bot.channelLive and commandOptions["Overlay Color"]["enable"]:
+        # checks if the channel is live and the command is enabled
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Overlay Color"]["cooldown_Chatter"], commandOptions["Overlay Color"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter()(context, "Overlay Color"):
+                fullMsg = context.content
+                # gets the full message from the contents
+                try:
+                    cmd, color = fullMsg.split(" ", 1)
+                    # splits the command, stores the hex color code as color
+
+                    dataPasser("Overlay Color", color)
+                    # calls the dataPasser function with the color
+
+                    if color.lower() == "clear":
+                        await context.reply(f"Clearing overlay text color")
+                    else:
+                        await context.reply(f"Changing overlay text color")
+
+                except:
+                    # if the command fails
+                    await context.reply(f"Add a valid hex code after !overlayColor, please")
+                    # replies to user 
+
 ### SBO ###
 
     @commands.command(aliases=["SBO"])
     @commands.cooldown(rate = 1, per=300, key=commands.BucketType.channel)
     async def sbo(self, context: commands.Context) -> None:
-        """!sbo / !SBO"""
+        """sbo / SBO"""
 
         await context.reply(f"SBO is a Twitch Bot base made to simplify Spotify-Twitch connection, currently on {SBO_Bot_ver} // LP")
         # replies with the SBO details
 
-### Command Error ###
 
-    async def event_command_error(self, context: commands.Context, error: Exception):
-        """Handles Twitch(IO) command errors"""
-        if isinstance(error, commands.CommandNotFound):
-            # if the command returns a "command not found"
-            return
-            # doesn't return anything, because it's expected behavior
-        if isinstance(error, commands.CommandOnCooldown):
-            # if the command returns a "cooldown"
-            cooldown = round(error.remaining)
-            # stores the time remaining for user/channel cooldown
-            await print(f"Command is on cooldown for {cooldown} seconds", flush=True)
-            # logs a cooldown message
-            return
-        if isinstance(error, commands.MissingRequiredArgument):
-            # if there's a missing
-            await context.reply(f"Missing parameter")
-            # sends a parameter message
-            return
-        else:
-            # if it's something else
-            await print(f"Error handling {context.command}: {error}", flush=True)
-            # logs an error
             
 ### Database / Token Storage ###
 
@@ -883,12 +1078,6 @@ if not ttvName or not botName:
         # user inform
         input("Press enter to exit", flush=True)
         raise SystemExit
-
-dataPassThread = threading.Thread(target = lambda: dataPasser("start", "uri"))
-# creates a thread for websocket connection
-dataPassThread.start()
-# starts the websocket thread
-
 
 if __name__ == "__main__":
     logWriter()

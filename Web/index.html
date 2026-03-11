@@ -2,16 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.3.10.0506</title>
+<title>Spotify Overlay v0.3.11.1545</title>
 
 <script>
 
-// initialises (last) track as null on start
+// initialises last track as null on start
 let lastTrackID = null;
-let trackID = null;
-
-// initialises a boolean to check if the song has changed
-let trackChanged = false;
 
 // timer/progress bar variables
 let currentProgress, lastPercentage = 0;
@@ -26,6 +22,9 @@ let isPaused = false;
 
 // initialises global variables (websocket + all the elements)
 let ws, player, cover, titleElement, artistElement, albumElement, bar, timer;
+
+// initialises global color variables
+let defaultTitleColor, defaultSupportColors, defaultBorderColor, defaultProgressColor;
 
 // initialises widths for player 
 let playerWidthRaw, playerHeightRaw = 0;
@@ -55,9 +54,15 @@ document.addEventListener("DOMContentLoaded", () => {
         // sets all the variables that the elements use based on loaded config.json file
         
         // stores the player size here first (can be directly replaced with a number, easy debug access)
-        playerWidthRaw = Config.playerWidth // 500
+        playerWidthRaw = Config.playerWidth; // 500
         // playerHeightRaw is *typically* the boundary to the image size, which is 90% of the height
-        playerHeightRaw = Config.playerHeight // 100
+        playerHeightRaw = Config.playerHeight;// 100
+        
+        // stores the config colors to the default variables
+        defaultTitleColor = Config.titleColor;
+        defaultSupportColors = Config.supportColors;
+        defaultBorderColor = Config.borderColor;
+        defaultProgressColor = Config.progressBarColor;
 
         // player size + opacity
         document.documentElement.style.setProperty("--playerWidth", playerWidthRaw + "px");
@@ -66,16 +71,16 @@ document.addEventListener("DOMContentLoaded", () => {
         // title styling
         document.documentElement.style.setProperty("--titleStyle", Config.titleStyle);
         document.documentElement.style.setProperty("--titleWeight", Config.titleWeight);
-        document.documentElement.style.setProperty("--titleColor", Config.titleColor);
+        document.documentElement.style.setProperty("--titleColor", defaultTitleColor);
         // album, artist, timer styling
         document.documentElement.style.setProperty("--supportStyles", Config.supportStyles);
         document.documentElement.style.setProperty("--supportWeights", Config.supportWeights);
-        document.documentElement.style.setProperty("--supportColors", Config.supportColors);
+        document.documentElement.style.setProperty("--supportColors", defaultSupportColors);
         // player border style
         document.documentElement.style.setProperty("--borderStyle", Config.borderStyle);
-        document.documentElement.style.setProperty("--borderColor", Config.borderColor);
+        document.documentElement.style.setProperty("--borderColor", defaultBorderColor);
         // progress bar style
-        document.documentElement.style.setProperty("--pbcNorm", Config.progressBarColor);
+        document.documentElement.style.setProperty("--pbcNorm", defaultProgressColor);
         document.documentElement.style.setProperty("--pbcPause", Config.progressBarPaused);
 
         // sets a constant for the max size a text can be (2x wider than the player)
@@ -96,88 +101,88 @@ document.addEventListener("DOMContentLoaded", () => {
         // creates a websocket to that port
         ws = new WebSocket(`ws://127.0.0.1:${wsPort}/ws`);
         
-        // debug/console printing in browser
+        // debug/console printing (in browser)
         ws.onopen = () => {
             console.log("Websocket connected!");
         };
+        // in case of an error with the websocket
         ws.onerror = (err) => {
             console.error("Websocket error: ", err);
         };
+        // when the connection ends/disconnects
         ws.onclose = (evt) => {
+            // send a warning in console
             console.warn("Websocket closed: ", evt);
+            // wait 5 seconds (5000 ms), then retry
+            setTimeout(() => {
+                console.log("Attempting reconnect");
+                ws = new WebSocket(`ws://127.0.0.1:${wsPort}/ws`);
+                }, 5000);
         };
-
-        // when it gets a new "message" (package) from python
+        // when it gets a new "message" (payload) from python
         ws.onmessage = (event) => {
-        // opens and stores the data
-        const data = JSON.parse(event.data);
 
-        // stores a "track ID" from the track counter ID made by SBO
-        trackID = String(data.id);
+            // opens and stores the data
+            const data = JSON.parse(event.data);
+            
+            // console.log("Payload:", data) // D E B U G
+            // console.log("Data type:", data.type) // D E B U G
 
-        // if the last "track ID" doesn't match the current one
-        if(lastTrackID !== trackID){
-            // sets the temp variable to match
-            lastTrackID = trackID;
+            // "data.type" (given by SBO-WS in payload) determines what updates are performed:
+            // "full" does both updates below, "track" runs player-related changes and timestamps, "color" only colors;
+            // this allows the Twitch chat commands to not re-run the entire program just to change colors
 
-            // fades in a new song's info
-            player.style.opacity = 0;
-            setTimeout(()=> player.style.opacity = 1, 50);
+            // if the set data type is "track" or "full" (meaning song has changed)
+            if (data.type === "track" || data.type === "full") {
+                // grabs the text contents from the data file and turns into elements (uses "" if not found)
+                titleElement.textContent = data.title || "";
+                artistElement.textContent = data.artist || "";
+                albumElement.textContent = data.album || "";
+                // grabs the image, link -> picture
+                cover.src = data.cover;
 
-            // reset progress (bar)
-            currentProgress = data.progress || 0;
-            duration = data.duration || 1;
-
-            // sets the flag for track changing to true
-            trackChanged = true;
-        }
-        // if the track ID is the same
-        else {
-            // sets the flag for track checking to true
-            trackChanged = false;
-        }
-
-        // check for paused state (boolean, true/false)
-        isPaused = data.paused;
-
-        // adds/removes the paused element type
-        if(isPaused) player.classList.add("paused");
-        else player.classList.remove("paused");
-
-        // grabs the text contents from the data file and turns into elements (uses "" if not found)
-        titleElement.textContent = data.title || "";
-        artistElement.textContent = data.artist || "";
-        albumElement.textContent = data.album || "";
-
-        // grabs the album cover picture
-        if(data.cover) cover.src = data.cover;
-
-        // if the text scrolling is enabled
-        if (enableScrolling) {
-            // uses the length-checking function to check the size of the text fields
-            checkTextSize(titleElement);
-            checkTextSize(artistElement);
-            checkTextSize(albumElement);
-        }
-
-        // grabs the progress and duration (if neither is undefined)
-        if(data.progress !== undefined && data.duration !== undefined){
-            // checks to make sure the song isn't paused
-            if (!isPaused) {
-                // only updates the fields if the fields are valid and song is playing (default of 0, in case none is found)
+                // sets the timer variables (with fallbacks)
                 currentProgress = data.progress || 0;
-                // sets the duration (default of 1, in case none is found)
                 duration = data.duration || 1;
+                // updates the last update time
+                lastUpdateTime = Date.now();
+
+                // checks if the last "track ID" doesn't match the current one (new song)
+                if(lastTrackID !== data.id) {
+                    // sets the temp variable to match
+                    lastTrackID = data.id;
+                    // fades out, then fades in a new song
+                    player.style.opacity = 0;
+                    // first number dictates the opaqueness (see-through), second number the transition time (in ms)
+                    setTimeout(()=> player.style.opacity = 1, 300);
+                }
             }
-        }
+            // if the data type is "colors" or "full" (meaning a chat command -> color change)
+            if (data.type === "color" || data.type === "full") {
+                // calls the function to change the colors
+                colorChanger(data);
+            }
+            // assigns the boolean from the payload
+            isPaused = data.paused
+            // adds/removes the paused element style, based on the payload boolean for pause state
+            if(isPaused) player.classList.add("paused");
+            else player.classList.remove("paused");
 
-        // fade in animation on load 
-        player.style.opacity = 1;
+            // if the text scrolling is enabled and the element's scroll width is big enough
+            if (enableScrolling && (titleElement.scrollWidth > maxInfoSize)) {
+                // calls the length-checking function to get the size of the title field
+                checkTextSize(titleElement);
+            }
+            if (enableScrolling && (artistElement.scrollWidth > maxInfoSize)) {
+                // calls the length-checking function to get the size of the artist field
+                checkTextSize(artistElement);
+            }
+            if (enableScrolling && (albumElement.scrollWidth > maxInfoSize)) {
+                // calls the length-checking function to get the size of the album field
+                checkTextSize(albumElement);
+            }
 
-        // set last update time
-        lastUpdateTime = Date.now();
-
-        }; // closes the package loop
+        }; // closes the payload check
     });
 });
 
@@ -544,14 +549,11 @@ function checkTextSize(element) {
     // stores the % the element should move (delta/width = ratio * 100 = %, and since it should move L -> R, it's negative)
     const shiftAmount = ((elementDelta / elementWidth) * (-100));
 
-    //console.log("This is the amount to move: ", shiftAmount)
-    
-
     // checks the width of the passed element against the "parent element" (the element that stores the passed element)
     // for all the elements currently contained, it's the 
     if (elementWidth > parentWidth) {
 
-        // if the element is wider, checks if the field already is scrolling
+        // if the element is wider, but scrolling isn't applied
         if (!element.classList.contains("scrolling")) {
             // enables scrolling
             element.classList.add("scrolling");
@@ -571,9 +573,11 @@ function checkTextSize(element) {
     } 
     // if the element selected is NOT wider than the "parent" - sets the titleShift to 0% (won't move)
     else {
-        // if it's not wider, disables it
-        element.classList.remove("scrolling");
-
+        // if it's not wider, and scrolling is applied
+        if (element.classList.contains("scrolling")) {
+            // removes scrolling
+            element.classList.remove("scrolling");
+        }
         // if the selected element is the title, sets its shift percentage
         if (element === titleElement) {
         document.documentElement.style.setProperty("--titleShift", 0 + "%");
@@ -602,63 +606,65 @@ function timeFormat(sec) {
 // progress bar animation
 function progressAnimation() {
 
-    // checks if the progress bar and timer elements are ready (if they are both defined)
-    if (!bar || !timer) {
-        // if they're not, calls itself again
-        requestAnimationFrame(progressAnimation);
-        // doesn't progress the function on this call
-        return;
-    }
-
-    // stores the current time (-2 to help with some offset induced by Spotify API and/or SBO -> SBO-WS -> HTML connection delay)
+    // stores the current time in milliseconds (-2000 to help with some offset induced by Spotify API and/or SBO -> SBO-WS -> HTML connection delay)
     // if this number is set too close to realtime, songs would end here and on Spotify at the same time
     // this would just look odd, as the overlay waits for new data to be sent via SBO and SBO-WS
-    const now = (Date.now() - 2);
+    const now = (Date.now() - 2000);
     // calculates how long it's been since last update, turns into seconds
     const elapsed = (now - lastUpdateTime) / 1000;
-    // sets the last update to current time
+
+    // sets the last update time to match the current time
     lastUpdateTime = now;
 
-    // makes sure the player isn't paused - skips all calculation if the playback is paused
+    // makes sure the player isn't paused - skips all calculation if the playback is paused (doesn't update the timer, so it stays still)
     if (!isPaused) {
         
-        // adds the elapsed time to a temp
-        tempProgress += elapsed;
+        // adds the elapsed time to progress
+        currentProgress += elapsed;
 
-        // ensures the track hasn't changed and that adding the elapsed time results in a higher number (prevents the clock from going down)
-        if (!trackChanged && currentProgress < tempProgress) {
-            // adds the passed time to current time (updating where the bar should be)
-            currentProgress += elapsed;
-            // sets the temp variable to match
-            tempProgress = currentProgress;
-        }
-        // checks if the track has changed
-        if (trackChanged) {
-            // if the track changes, sets both timer variables to 0
-            currentProgress = 0
-            tempProgress = 0
-        }
         // checks if the song's timer has run out, enforces a cap to the timer
         if (currentProgress > duration) {
             // sets the progress to match the length of the song, so that it doesn't go over
-            // this is due to some delay between the Spotify -> HTML connection
+            // this is due to some (potential) delay between the Spotify -> HTML connection
             currentProgress = duration;
         }
-        // saves the last % the progress was at (so when it pauses it doesn't tilt)
-        lastPercentage = (currentProgress / duration) * 100;
     }
+    // stores the percentage the song is at
+    lastPercentage = (currentProgress / duration) * 100;
 
-    // if the player *is* paused, none of the calculations change, so everything stays the same
-
-    // calculates and sets the progress bar percentage based off last percentage saved
+    // calculates and sets the progress bar percentage based off the percentage
     bar.style.width = Math.min(100, lastPercentage) + "%";
 
     // timer update (calls timeFormat on both the current time and the duration)
     // also controls the format, change the slash to change the style
     timer.textContent = `${timeFormat(currentProgress)} / ${timeFormat(duration)}`;
 
-    // calls the animation request again
+    // calls the animation request again on itself
     requestAnimationFrame(progressAnimation);
+}
+
+// function to change the color variables based on chat commands (chat -> Bot py -> SBO py -> SBO-WS py -> here)
+function colorChanger(data) {
+    // sets the property for title text color variable (based on what the data package contains - needs to be set, can't be "Clear", otherwise sets to default)
+    document.documentElement.style.setProperty(
+        "--titleColor",
+        data.titleColor && data.titleColor !== "Clear" ? data.titleColor : defaultTitleColor
+    );
+    // sets the property for support text color variable (based on what the data package contains - needs to be set, can't be "Clear", otherwise sets to default)
+    document.documentElement.style.setProperty(
+        "--supportColors",
+        data.supportColor && data.supportColor !== "Clear" ? data.supportColor : defaultSupportColors
+    );
+    // sets the property for border color variable (based on what the data package contains - needs to be set, can't be "Clear", otherwise sets to default)
+    document.documentElement.style.setProperty(
+        "--borderColor",
+        data.borderColor && data.borderColor !== "Clear" ? data.borderColor : defaultBorderColor
+    );
+    // sets the property for progress bar color variable (based on what the data package contains - needs to be set, can't be "Clear", otherwise sets to default)
+    document.documentElement.style.setProperty(
+        "--pbcNorm",
+        data.progressColor && data.progressColor !== "Clear" ? data.progressColor : defaultProgressColor
+    );
 }
 
 </script>
