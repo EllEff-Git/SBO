@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 
-SBO_Bot_ver = "v0.3.11.1040"
+SBO_Bot_ver = "v0.3.11.1618"
 """The SBO Bot version (y.m.dd.hhmm)"""
 
 
@@ -411,37 +411,33 @@ class Bot(commands.AutoBot):
 ### Check Status of Live Check ###
 
     async def checkLiveCheck(self):
-        """Function that gets callled to run liveCheck every minute to see if the channel is live"""
+        """Function that gets called to run liveCheck every minute to see if the channel is live"""
         logged = False
         # sets a boolean to check if the status has been logged already
         while True:
             # while program is running
-            channelLive = await self.liveCheck(self.owner_id)
+            self.channelLive = await self.liveCheck(self.owner_id)
             # sets the boolean based on the liveCheck result
-            if channelLive != self.channelLive:
-                # if the local and class booleans don't match
-                self.channelLive = channelLive
-                # ensures they do
-                if channelLive:
-                    # if the channel is live
-                    if not logged and playbackControls:
-                        # if the live status hasn't already been logged once and playback controls are on (at least one playback command is enabled)
-                        print(f"{ttvName} is live! Playback control enabled for at least one command! ", flush=True)
-                        # prints a live message
-                        logged = True
-                        # changes boolean to True to prevent constant logging
-                    elif not logged and not playbackControls:
-                        # if the live status hasn't already been logged once, but all "playback controls" are off
-                        print(f"{ttvName} is live! All playback controls are disabled via config")
-                        logged = True
-                        # changes boolean to True to prevent constant logging
-                else:
-                    # if the channel isn't live
-                    logged = False
-                    # changes/ensures boolean is False
+            if self.channelLive:
+                # if the channel is live
+                if not logged and playbackControls:
+                    # if the live status hasn't already been logged once and playback controls are on (at least one playback command is enabled)
+                    print(f"{ttvName} is live! Playback control enabled for at least one command! ", flush=True)
+                    # prints a live message
+                    logged = True
+                    # changes boolean to True to prevent constant logging
+                elif not logged and not playbackControls:
+                    # if the live status hasn't already been logged once, but all "playback controls" are off
+                    print(f"{ttvName} is live! All playback controls are disabled via config")
+                    logged = True
+                    # changes boolean to True to prevent constant logging
+            else:
+                # if the channel isn't live
+                logged = False
+                # changes/ensures boolean is False
 
             await asyncio.sleep(60)
-            # sleeps for a minute
+                # sleeps for a minute
 
 ### Command Setup ###
 
