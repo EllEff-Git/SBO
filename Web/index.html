@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.3.11.1609</title>
+<title>Spotify Overlay v0.3.12.1913</title>
 
 <script>
+
 
 // initialises last track as null on start
 let lastTrackID = null;
@@ -14,8 +15,8 @@ let currentProgress, lastPercentage = 0;
 let duration, tempProgress = 1;
 let lastUpdateTime = Date.now();
 
-// initialises field size variables
-let maxInfoSize, maxTextSize = 0;
+// initialises a field size variable
+let maxInfoSize = 0;
 
 // initialises a boolean for pause state
 let isPaused = false;
@@ -56,9 +57,9 @@ document.addEventListener("DOMContentLoaded", () => {
         // stores the player size here first (can be directly replaced with a number, easy debug access)
         playerWidthRaw = Config.playerWidth; // 500
         // playerHeightRaw is *typically* the boundary to the image size, which is 90% of the height
-        playerHeightRaw = Config.playerHeight;// 100
+        playerHeightRaw = Config.playerHeight; // 100
         
-        // stores the config colors to the default variables
+        // stores the config colors in these "default variables"
         defaultTitleColor = Config.titleColor;
         defaultSupportColors = Config.supportColors;
         defaultBorderColor = Config.borderColor;
@@ -83,18 +84,11 @@ document.addEventListener("DOMContentLoaded", () => {
         document.documentElement.style.setProperty("--pbcNorm", defaultProgressColor);
         document.documentElement.style.setProperty("--pbcPause", Config.progressBarPaused);
 
-        // sets a constant for the max size a text can be (2x wider than the player)
-        maxTextSize = (playerWidthRaw * 2);
         // sets a constant for the max size the info fields can be (removes the padding and image size from player size)
         maxInfoSize = (playerWidthRaw - (playerHeightRaw * 0.9) - 12);
 
-        // defines the max size for the text fields (2x player)
-        document.documentElement.style.setProperty("--maxTextWidth", maxTextSize + "px");
         // defines the max size for the info fields (text, progress container (bar + timer))
         document.documentElement.style.setProperty("--maxInfoWidth", maxInfoSize + "px");
-
-        // stores the scrolling boolean
-        const enableScrolling = Config.enableScrolling;
         
         // saves the http port as a constant
         const wsPort = Config.httpPort;
@@ -130,16 +124,24 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // "data.type" (given by SBO-WS in payload) determines what updates are performed:
             // "full" does both updates below, "track" runs player-related changes and timestamps, "color" only colors;
+            // "progress" only happens if SBO spots the real progress and expected progress doesn't match (within a set threshold)
             // this allows the Twitch chat commands to not re-run the entire program just to change colors
 
             // if the set data type is "track" or "full" (meaning song has changed)
             if (data.type === "track" || data.type === "full") {
-                // grabs the text contents from the data file and turns into elements (uses "" if not found)
-                titleElement.textContent = data.title || "";
-                artistElement.textContent = data.artist || "";
-                albumElement.textContent = data.album || "";
-                // grabs the image, link -> picture
-                cover.src = data.cover;
+
+                // assigns the boolean from the payload
+                isPaused = data.paused
+                // adds/removes the paused element style, based on the payload boolean for pause state
+                if(isPaused) player.classList.add("paused");
+                else player.classList.remove("paused");
+                
+                // calls the length-checking function to get the size of the title field
+                checkTextSize(titleElement);
+                // calls the length-checking function to get the size of the artist field
+                checkTextSize(artistElement);
+                // calls the length-checking function to get the size of the album field
+                checkTextSize(albumElement);
 
                 // sets the timer variables (with fallbacks)
                 currentProgress = data.progress || 0;
@@ -151,33 +153,48 @@ document.addEventListener("DOMContentLoaded", () => {
                 if(lastTrackID !== data.id) {
                     // sets the temp variable to match
                     lastTrackID = data.id;
-                    // fades out, then fades in a new song
-                    player.style.opacity = 0;
-                    // first number dictates the opaqueness (see-through), second number the transition time (in ms)
-                    setTimeout(()=> player.style.opacity = 1, 300);
+
+                    // list of elements to fade out and in
+                    const fadeElements = [title, artist, album, cover, timer]
+
+                    // goes through each element in the list
+                    fadeElements.forEach(element => {
+                        // sets the transition time for opacity 
+                        element.style.transition = "opacity 1s";
+                        // sets it to fade to 0.4 (40% opacity)
+                        element.style.opacity = 0.4;
+                    });
+
+                    // waits a set amount (fairly smooth transition is with ~half of the opacity time - too fast and it snaps in, too slow and it looks laggy)
+                    setTimeout(() => {
+
+                        // grabs the text contents from the data file and turns into elements (uses "" if not found)
+                        titleElement.textContent = data.title || "";
+                        artistElement.textContent = data.artist || "";
+                        albumElement.textContent = data.album || "";
+                        // grabs the image, link -> picture
+                        cover.src = data.cover;
+
+                        // sets the opacities back to 1
+                        fadeElements.forEach(element => {
+                            // sets the transition time back to full opacity
+                            element.style.transition = "opacity 1s"
+                            element.style.opacity = 1;
+                        });
+                        // the time to wait (in ms)
+                    }, 400)
                 }
             }
-            // if the data type is "colors" or "full" (meaning a chat command -> color change)
+            // if the data type is "color" or "full" (meaning a chat command -> color change)
             if (data.type === "color" || data.type === "full") {
                 // calls the function to change the colors
                 colorChanger(data);
             }
-            // assigns the boolean from the payload
-            isPaused = data.paused
-            // adds/removes the paused element style, based on the payload boolean for pause state
-            if(isPaused) player.classList.add("paused");
-            else player.classList.remove("paused");
-            
-            // if the scrolling is enabled via config
-            if (enableScrolling) {
-                // calls the length-checking function to get the size of the title field
-                checkTextSize(titleElement);
-                // calls the length-checking function to get the size of the artist field
-                checkTextSize(artistElement);
-                // calls the length-checking function to get the size of the album field
-                checkTextSize(albumElement);
+            // if the data type is "progress" (meaning SBO flagged a discrepency in the song progress, but nothing else changed)
+            if (data.type === "progress") {
+                // updates the progress variable to match real-ish time
+                currentProgress = data.progress;
             }
-
         }; // closes the payload check
     });
 });
@@ -278,10 +295,6 @@ body, html, #background, #player {
     /* where to place the player (X=0, Y=0 puts it in the top left corner */
     transform: translateY(0px);
     transform: translateX(0px);
-    /* short fade-in animation */
-    transition: opacity 1s;
-    /* when the ws loads, it applies an opacity, the opacity here is how see-through it is *before* that */
-    opacity: 0;
     /* player sizes */
     width: var(--playerWidth, 420px);
     height: var(--playerHeight, 90px);
@@ -602,10 +615,8 @@ function timeFormat(sec) {
 // progress bar animation
 function progressAnimation() {
 
-    // stores the current time in milliseconds (-2000 to help with some offset induced by Spotify API and/or SBO -> SBO-WS -> HTML connection delay)
-    // if this number is set too close to realtime, songs would end here and on Spotify at the same time
-    // this would just look odd, as the overlay waits for new data to be sent via SBO and SBO-WS
-    const now = (Date.now() - 2000);
+    // stores the current time in milliseconds
+    const now = (Date.now());
     // calculates how long it's been since last update, turns into seconds
     const elapsed = (now - lastUpdateTime) / 1000;
 

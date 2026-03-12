@@ -1,6 +1,6 @@
 import subprocess, configparser, socket
 # Required to run the websocket program, the python intercommunication system and to read config
-import os, sys, time, threading, datetime
+import os, sys, time, threading, datetime, queue, concurrent.futures
 # Required for system information, background tasking and queueing
 import spotipy, requests, json
 # Required for basic function of Spotify data requests and storing
@@ -15,7 +15,7 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.11.1545"
+SBO_ver = "v0.3.13.0041"
 """The SBO program version (y.m.dd.hhmm)"""
 
 
@@ -71,9 +71,7 @@ songEvent = threading.Event()
 spotifyLock = threading.Lock()
 """Creates a locking method to prevent multiple API calls stacking"""
 
-
 ### Config ###
-
 
 Config = configparser.ConfigParser(comment_prefixes = ["/", "#"], allow_no_value = True)
 """The configuration file reader"""
@@ -83,14 +81,14 @@ Config.read(ConfigPath, "utf8")
 # Where the config is read from, with UTF-8 format
 
 enableBot = Config.getboolean("Twitch-Bot", "enable_Twitch_Bot")
-"""Whether to enable the Twitch Bot part of the program (boolean)"""
+"""Whether to enable the Twitch Bot PTP connection  (boolean)"""
 runBot = Config.getboolean("Twitch-Bot", "sbo_Runs_Bot")
-"""Whether to automatically start the bot (boolean)"""
+"""Whether to automatically start the bot program (boolean)"""
 
 if runBot:
     # if SBO should run the bot
     enableBot = True
-    # also enables the bot
+    # also enables the bot connection
 
 if enableBot:
     # if the bot is enabled
@@ -122,9 +120,7 @@ else:
     time.sleep(30)
     raise SystemExit
 
-
 ### Auth ###
-
 
 sessionID = requests.Session()
 """Tells the auth to keep one stable connection, rather than re-connecting every request"""
@@ -141,24 +137,19 @@ authorisation = SpotifyOAuth(
 main = spotipy.Spotify(auth_manager = authorisation, requests_session = sessionID)
 """Handles the authentication and user identification"""
 
-
 ### Variables ###
 
-
-currentURI = None
-"""Stores the currently playing track's URI"""
-
-currentInfo = None
-"""Song info dictionary"""
+currentURI = currentInfo = csPlaylistID = None
+"""The current track information (URI is Spotify's idenfitier, Info contains the whole track package as a dict, csPlaylistID is the current track's playlist's ID)"""
 
 pauseUpdated = False
-"""A check to see if the pause state has been registered properly"""
+"""Song state boolean checker to see if the pause has been registered"""
 
-oldCount = 0
-"""Variable for song counter"""
+oldCount = trackCounter = 0
+"""Variables for song counter"""
 
-trackCounter = 0
-"""A counter to track the current song's 'ID'"""
+updateProgress = 0
+"""A counter to check when/if progress was updated"""
 
 songColorHex = textColorHex = barColorHex = overlayColorHex = None
 """Saves all the colors as empty, so that they can hold hex codes later"""
@@ -166,100 +157,283 @@ songColorHex = textColorHex = barColorHex = overlayColorHex = None
 callSong = False
 """A check to see if song() should be called regardless of song change state (due to a color change)"""
 
+lastSong = lastArtist = lastPlaylistURL = None
+"""Previous track's identifiers"""
 
 
-### Spotify Data Grabber Function ###
+
+### Spotify API Request ###
 
 
 
-def authPlayback():
-    """Function to more "safely" handle Spotify API requests and errors"""
-    
-    global main
-    # takes the global variable and makes it local
+class SpotifyQueue:
+    """A class that handles Spotify API calls, with call queueing"""
 
-    with spotifyLock:
+    def __init__(self, main, spotifyLock):
+        self.main = main
+        self.spotifyLock = spotifyLock
+        # sets the variables in scope
+        self.spotifyCallQueue = queue.Queue()
+        # creates a queue to place API calls into
+        self.spCallQueueTracker = set()
+        # creates an empty set to clone the API calls to keep track of the length
+
+    def queueManager(self, call: str, URI: str = None):
+        """Function to manage the queue (URI can be empty if call is a playback request or control, future can be empty if no return is expected)"""
+
+        futureObj = concurrent.futures.Future()
+        # creates a new future object in case the function wanted a return on data
+
+        nextCall = (call, URI, futureObj)
+        # creates the next call from the arguments
+
+        with self.spotifyLock:
         # uses a threading lock, to prevent multiple requests at once
+            if nextCall not in self.spCallQueueTracker:
+                # ensures the next call isn't already in queue (uses the set to check, since you can't check the queue directly)
+                self.spotifyCallQueue.put(nextCall)
+                # adds the call to the queue
+                self.spCallQueueTracker.add(nextCall)
+                # also adds the call into the set
+
+        return futureObj
+        # returns the future object so the function can wait for the result
+
+    def spotifyAPIPrepper(self):
+        """Function that prepares the calls for spotifyAPICall"""
+        while True:
+        # while the function is running, keeps running requests (only when it's ready, prevents multiple calls at once)
+
+            nextAPICall = self.spotifyCallQueue.get(block = True)
+            # grabs the next call from the queue (removes it at the same time), blocks progress until there's something in the queue
+            self.spCallQueueTracker.remove(nextAPICall)
+            # deletes the 0th element (first), since that's the same element the queue stores
+            call, link, future = nextAPICall
+            # splits the queue item into its call, link and future components
+
+            self.controlList = ["pause", "resume", "skip", "previous"]
+            # makes a list of the playback control options (these don't have special conditions and don't return anything)
+
+            if call == "playback":
+                # if the call is to get new data
+                success = self.spotifyAPICall(call)
+                # calls spotifyAPICall with just a playback request
+
+            elif call == "playlist":
+                # if the call is to get playlist information
+                success = self.spotifyAPICall(call, link)
+                # calls spotifyAPICall with a playlist command and a link
+            
+            elif call in self.controlList:
+                # if the call is a part of the playback control list (no returns)
+                success = self.spotifyAPICall(call)
+                # simply passes the call to spotifyAPICall
+            
+            elif call == "queue":
+                # if the call is to add an item to queue
+                success = self.spotifyAPICall(call, link)
+                # calls the spotifyAPICall with a queue command and a link
+
+            future.set_result(success)
+            # sets the future object's return to be the success (if there's a return from the API call, it gets passed back)
+            time.sleep(1)
+            # waits a second before even starting next call
+
+    def spotifyAPICall(self, call:str, URI:str = None):
+        """Function to perform Spotify API calls and handle errors gracefully"""
 
         tokenRefresh = False
-        # a boolean to determine whether to print the token refresh or reconnect text
-
+        # a boolean to determine whether to print the token refresh or reconnect text (purely QoL)
         internalError = False
-        # a boolean to determine if the error was Spotify's internal error (changes final print)
+        # a boolean to determine if the error was Spotify's internal error (purely QoL)
 
         for attempt in range(3):
-            # tries a max of 3 times to get Spotify data (typically succeeds 1st try, so if it doesn't work in 3, there's a bigger issue)
-            
+            # tries a max of 3 times to get Spotify data (typically succeeds 1st try, so if it doesn't work in 3, there's a bigger issue)    
             try:
-                # first tries to send an API request to Spotify
-                
-                success = main.current_playback()
-                # if it works, returns the Spotify playback package (dictionary)
+                ### API Requests / Returns ###
+                if call == "playback":
+                    # if the request is for playback
+                    success = main.current_playback()
+                    # gets the current playback
+                elif call == "playlist":
+                    # if the request is for a playlist's details
+                    playlist = main.playlist(URI)
+                    # gets the playlist info via URI (takes ID, not link)
+                    try:
+                        # tries to *also* get the number of tracks
+                        tracks = main.playlist_items(URI, fields="total")
+                        # saves the number of tracks in "tracks"
+                        success = playlist, tracks
+                        # turns the return into a tuple of the playlist and track information
+                    except:
+                        # if it can't (error for some reason or another)
+                        success = playlist, 0
+                        # turns success into a tuple, so that the calling function knows there's no track information
 
+                ### API Push / No Return ###
+                elif call == "queue":
+                    # if the call is to add a song to queue
+                    try:
+                        package = main.track(URI)
+                        # sends the URI to Spotify to get the track's details
+                        if package:
+                            # ensures the track information is received first
+                            trackName = package.get("name")
+                            # gets the name of the track first
+                            trackArtistDict = package.get("artists")[0]
+                            # gets the dictionary of the first artist
+                            trackArtist = trackArtistDict.get("name")
+                            # gets the artist name
+                            main.add_to_queue(URI)
+                            # pushes the URI into the Spotify queue
+                            success = f"Queued: {trackName} by {trackArtist}"
+                            # creates a string from the track and artist
+                            print(f"{Time()}[spAPI]: {success}")
+                            # prints a confirm message with the song name
+                    except:
+                        print(f"{Time()}[spAPI]: Queue failed")
+                        # prints a fail message
+                        success = f"Unable to queue"
+
+                ### Controls / No Return ###
+                elif call == "pause":
+                    # if the call is to pause playback
+                    playing = main.current_playback()
+                    # grabs the current playback status
+                    if playing and playing.get("is_playing", False):
+                        # checks if the playback state is valid and if it's playing 
+                        success = main.pause_playback()
+                        # pauses the playback
+                        print(f"{Time()}[spAPI]: Paused playback")
+                        # prints a confirm message
+                    else:
+                        print(f"{Time()}[spAPI]: Playback already paused")
+                        # prints a no-no message
+                        success = None
+                elif call == "resume":
+                    # if the call is to resume playback
+                    playing = main.current_playback()
+                    # grabs the current playback status
+                    if not playing or not playing.get("is_playing", False):
+                        # checks if the playback state is valid and if it's paused (not playing)
+                        success = main.start_playback()
+                        # "starts" playback (continue)
+                        print(f"{Time()}[spAPI]: Resumed playback")
+                        # prints a confirm message
+                    else:
+                        print(f"{Time()}[spAPI]: Already playing")
+                        # prints a no-no message
+                        success = None
+                elif call == "skip":
+                    # if the call is to skip a track
+                    playing = main.current_playback()
+                    # grabs the current playback status
+                    if playing and playing.get("item"):
+                        # checks if the playback state is valid 
+                        success = main.next_track()
+                        # goes to next track (skips)
+                        print(f"{Time()}[spAPI]: Skipped track")
+                        # prints a confirm message
+                    else:
+                        print(f"{Time()}[spAPI]: Can't skip")
+                        # prints a no-no message
+                        success = None
+                elif call == "previous":
+                    # if the call is to go back to previous track
+                    playing = main.current_playback()
+                    # grabs the current playback status
+                    if playing and playing.get("is_playing", False):
+                        # checks if the playback state is valid and if it's playing 
+                        success = main.previous_track()
+                        # goes back to previous track
+                        print(f"{Time()}[spAPI]: Went back to previous track")
+                        # prints a confirm message
+                    else:
+                        print(f"{Time()}[spAPI]: Couldn't go back")
+                        # prints a no-no message
+                        success = None
+
+                ### Unregistered Call ###
+                else:
+                    raise ValueError(f"Unregistered API call: {call}")
+                    # if an unintended call sneaks through
+
+                ### Connection Reacquisition ###
                 if attempt != 0 and not tokenRefresh:
-                    # if it's not the first attempt, meaning the reconnect attempt print has already been pushed once
-                    print(f"{Time()}[INFO]: Reconnect successful!")
+                    # if it's not the first attempt, meaning the reconnect attempt print has already been pushed once after an error
+                    print(f"{Time()}[spAPI]: Reconnect successful!")
                     # prints user update
-
                 elif tokenRefresh:
-                    # if the tokenrefresh variable is set to true, that means a connectionerror occurred at least once
-                    print(f"{Time()}[INFO]: Token refreshed successfully!")
+                    # if the tokenRefresh variable is set to true, means a connectionError occurred at least once
+                    print(f"{Time()}[spAPI]: Token refreshed successfully!")
                     # prints user update
 
+                # if it works, returns the Spotify API package (dictionary)
                 return success
                 # sends back the successfully found dictionary to the calling function (should only be looper)
-                
 
             except (SpotifyException, requests.exceptions.RequestException, ConnectionResetError) as error:
                 # if it fails to acquire a Spotify playback package
-
                 if isinstance(error, requests.exceptions.ConnectionError):
                     # if the error is a connection error (token expired)
-                    print(f"\n{Time()}[INFO]: Refreshing Spotify token")
+                    print(f"\n{Time()}[spAPI]: Refreshing Spotify token")
                     # doesn't sleep because this is a token error and should get fixed nearly instantly
                     # expected to print just about every 3600 seconds (1h)
                     tokenRefresh = True
                     # sets the tokenRefresh mode to true so it prints the token text on success
-                    internalError = False
-                    # sets the flag to false
-
                 elif isinstance(error, requests.exceptions.ReadTimeout):
                     # if the error is a read timeout (sort of random)
-                    print(f"{Time()}[ERROR]: Spotify API timeout, retrying in 5 seconds ({attempt+1}/3)")
+                    print(f"{Time()}[spAPI]: Spotify API timeout, retrying in 5 seconds ({attempt+1}/3)")
                     time.sleep(2)
                     # sleeps for 2 seconds (because there's a function-wide 3-second cooldown added on top)
-
+                elif isinstance(error, SpotifyException) and error.http_status == 403:
+                    # if the error is 403 (forbidden)
+                    print(f"{Time()}[spAPI]: Spotify API call failed (Code 403), action not allowed")
+                    # prints an "error" message (403 is the result of the API not being able to do something, like pause a paused song)
+                    break
+                    # breaks here (doesn't let the attempts continue)
                 elif isinstance(error, SpotifyException) and error.http_status == 500:
                     # if the error is 500 (internal error fail)
-                    print(f"{Time()}[ERROR]: Spotify internal error (Code 500). Attempting to reconnect ({attempt+1}/3)]")
+                    print(f"{Time()}[spAPI]: Spotify internal error (Code 500). Attempting to reconnect ({attempt+1}/3)]")
                     # prints an error message
                     internalError = True
                     # should never happen, but very very rarely does
-
+                    time.sleep(2)
+                    # adds 2 seconds of sleep (just to slow down, maybe catch a lucky reconnect)
+                elif isinstance(error, SpotifyException) and error.http_status == 400:
+                    # if the error is 400 (bad syntax, likely a faulty link)
+                    print(f"{Time()}[spAPI]: Faulty link or call syntax, can't process request")
+                    # prints "error" message
+                    break
+                    # stops the try loop (if it's faulty, no point in pushing again)
                 else:
                     # if the error is anything else
-                    print(f"{Time()}[ERROR]: Spotify errored due to {error}.\n{Time()}[INFO]: Attempting to reconnect ({attempt+1}/3)")
-                    internalError = False
-                    # sets the flag to false
+                    print(f"{Time()}[spAPI]: Spotify errored due to {error}.\n{Time()}[INFO]: Attempting to reconnect ({attempt+1}/3)")
+                    # prints generic error message
 
                 ### Too Many Errors ###
 
                 if attempt == 2 and not internalError:
                     # if it's the last attempt (range(3) = 0,1,2) and it fails
-                    print(f"{Time()}[CRITICAL]: All attempts to reconnect failed due to {error}\n\nPlease manually restart SBO. Exiting...")
+                    print(f"{Time()}[CRITICAL]: All attempts to reconnect to Spotify API failed due to {error}\n\nPlease manually restart SBO. Exiting...")
                     time.sleep(600)
                     raise SystemExit
                     # prompts user, then exits
-
                 elif attempt == 2 and internalError:
                     # if it's the last attempt and fails due to internal error
-                    print(f"{Time()}[CRITICAL]: All attempts to reconnect failed due to Spotify's internal error.\n\nPlease manually restart SBO. Exiting...")
+                    print(f"{Time()}[CRITICAL]: All attempts to reconnect to Spotify API failed due to Spotify's internal error.\n\nPlease manually restart SBO. Exiting...")
                     time.sleep(600)
                     raise SystemExit
                     # prompts user, then exits
 
-                time.sleep(3)
-                # waits 3 seconds to give it some time between tries
+            time.sleep(3)
+            # waits 3 seconds to give it some time between tries
+
+        self.spotifyCallQueue.task_done()
+        # tells the queue the task is complete
+
+        return {}
+        # on fail, returns an empty dictionary
 
 
 
@@ -274,14 +448,14 @@ def webHostListener():
 
     while True:
         client_socket, client_address = webHost.accept()
-        # waits for a client connection
+        # waits for a client connection, in a while loop so it can reconnect if it ever disconnects
         print(f"{Time()}[PTP]: SBO-Bot connected")
         # prints a Python to Python (Peer to Peer) inform when Bot connects successfully
 
         while True:
             # while the program is running
             rawMessage = client_socket.recv(1024)
-            # grabs any messages sent (1024 bytes, shouldn't use more than a few)
+            # grabs any messages sent (1024 bytes max, shouldn't use more than a few)
 
             if not rawMessage:
                 # if the message is empty (disconnect)
@@ -294,22 +468,22 @@ def webHostListener():
             print(f"{Time()}[PTP]: Command received:", message)
             # prints a Python to Python (Peer to Peer) inform
 
-            botCommand(message)
-            # calls botCommand with the decoded and stripped message
-
+            botCommand(message, client_socket)
+            # calls botCommand with the decoded/stripped message, as well as the client socket (to pass back messages)
 
 
 ### Bot Commands ###
 
 
-
-def botCommand(command: str):
+def botCommand(command: str, client_socket):
     """Helper function to pick what control function to call"""
+    global csPlaylistID
+    # grabs the current song's playlist ID from global variable
     playbackCommands = {
         "Skip": skip,
         "Pause": pause,
         "Resume": resume,
-        "Previous": previous,
+        "Previous": previous
     }
     # list of playback controlling commands
 
@@ -320,11 +494,21 @@ def botCommand(command: str):
         return
         # stops checks
 
+    if command.startswith("Playlist"):
+        # if the command starts with "playlist"
+        playlistID = csPlaylistID
+        # saves the current song's playlist's ID as playlistID
+        playlistInfo(playlistID, client_socket)
+        # sends a command to the playlist info request function to add the ID into the Spotify call queue
+        return
+        # stops checks
+
     if command.startswith("Queue:"):
         # if the command starts with "queue"
         x, uri = command.split(" ", 1)
         # splits the command into scrap (command) and the URI to pass
-        queue(uri)
+        queueTrack(uri, client_socket)
+        # sends a command to the queue function to add the URI/URL/ID into the Spotify queue
         return
         # stops checks
 
@@ -339,59 +523,95 @@ def botCommand(command: str):
     print(f"{Time()}[PTP]: Unknown command:", command)
     # if the command is somehow not recognized (shouldn't ever happen, but this way won't break)
 
+
 def skip():
     """Skips to next song"""
-    try:
-        main.next_track()
-        print(f"{Time()}[SBOT]: Skipped song")
-        # success log print
-    except:
-        print(f"{Time()}[SBOT]: Couldn't skip song")
-        # print if there's an error
+    spotifyQueueInstance.queueManager("skip")
+    # calls the queue manager to add a skip call to the call queue
 
 def pause():
     """Pauses playback"""
-    try:
-        main.pause_playback()
-        print(f"{Time()}[SBOT]: Paused playback")
-        # success log print
-    except:
-        print(f"{Time()}[SBOT]: Couldn't pause playback")
-        # print if there's an error
+    spotifyQueueInstance.queueManager("pause")
+    # calls the queue manager to add a pause call to the call queue
 
 def resume():
     """Resumes playback"""
-    try:
-        main.start_playback()
-        print(f"{Time()}[SBOT]: Resuming playback")
-        # success log print
-    except:
-        print(f"{Time()}[SBOT]: Couldn't resume playback")
-        # print if there's an error
+    spotifyQueueInstance.queueManager("resume")
+    # calls the queue manager to add a resume call to the call queue
 
 def previous():
     """Goes back to previous song"""
-    try:
-        main.previous_track()
-        print(f"{Time()}[SBOT]: Previous song")
-        # success log print
-    except:
-        print(f"{Time()}[SBOT]: Couldn't go to previous song")
-        # print if there's an error
+    spotifyQueueInstance.queueManager("previous")
+    # calls the queue manager to add a previous call to the call queue
 
-def queue(link):
+def queueTrack(link: str, client_socket):
     """Queues a given song via Spotify link"""
-    try:
-        main.add_to_queue(link)
-        print(f"{Time()}[SBOT]: Song added to queue")
-        # success log print
-    except:
-        print(f"{Time()}[SBOT]: Error adding to queue")
-        # print if there's an error (shouldn't be a type error since SBO-Bot checks type before sending)
+    futureQT = spotifyQueueInstance.queueManager("queue", link)
+    # calls the queue manager to add a link to the play queue
+    trackName = futureQT.result()
+    # gets the result via future object
+    client_socket.sendall(trackName.encode())
+
+def playlistInfo(link: str, client_socket):
+    """Requests playlist information via Spotify link"""
+    if link != "Not a playlist":
+        # if the current link is NOT set to not a playlist (SBO has detected it's not a playlist and thus set it to that string) 
+        futurePL = spotifyQueueInstance.queueManager("playlist", link)
+        # calls the queue manager to add a playlist info request to the call queue
+        playlistData, playlistTracks = futurePL.result()
+        # gets the results via a future object (waits until it's ready) (returns a tuple of data, tracks)
+        if playlistTracks:
+            # if the track dictionary exists and is valid
+            playlistTracks = playlistTracks.get("total")
+            # gets the number only
+        else:
+            playlistTracks = "a number of"
+            # creates a generic string instead
+        if playlistData:
+            # if there's a return that contains data
+            isPublic = playlistData.get("public", False) == True
+            # checks if the playlist is public, defaults to False (if the return is True, returns True, else False)
+            playlistName = playlistData.get("name", "Unknown Playlist")
+            # grabs the playlist name from the dictionary (defaults to Unknown Playlist if can't find)
+            if isPublic:
+            # if the playlist is public
+                try:
+                # tries to grab the data
+                    urls = playlistData.get("external_urls", {})
+                    # gets the urls first, uses an empty dict if not found
+                    owner = playlistData.get("owner", {})
+                    # gets the owner info first, uses an empty dict if not found
+                    playlistURL = urls.get("spotify", "Link unavailable")
+                    # grabs the Spotify URL from the external urls
+                    playlistOwner = owner.get("display_name", "Mystery Owner")
+                    # grabs the owner's name from the owner sub-dictionary
+                    playlistNameStr = f"{playlistName} by {playlistOwner} with {playlistTracks:,.0f} songs. {playlistURL}"
+                    # constructs a full response from the given info
+                except Exception as fail:
+                # if it fails to get valid data from the dictionary (sometimes Spotify sends bricked dictionaries that don't include everything)
+                    print(f"{Time()}[spAPI]: Failed to construct playlist information fully due to error {fail}")
+                    # console print of failure
+                    playlistNameStr = f"A playlist named {playlistName}, further information unavailable"
+                    # constructs a response from available data (name)
+            else:
+            # if the playlist is private
+                playlistNameStr = f"A private playlist named {playlistName}"
+                # constructs a response to not include a link or anything, just a name
+        else:
+            # if the return has no data
+            playlistNameStr = f"Couldn't find specified playlist"
+            # constructs a response to inform of an error
+    else:
+        playlistNameStr = f"Not currently listening to a playlist"
+        # if the playlist link is set to a "not a playlist" string, it means the track is being listened to off-playlist
+    client_socket.sendall(playlistNameStr.encode())
+    # sends the response back to SBO-Bot to reply with in chat
 
 
+### Color Changing ###
 
-def colorChanger(func, color):
+
+def colorChanger(func: str, color: str):
     """Helper function to call the correct color changer function"""
     global callSong
     # grabs the boolean from global -> local
@@ -414,53 +634,65 @@ def colorChanger(func, color):
     callSong = True
     # turns the flag to call song() to True (tells looper to run a song() instance regardless of song update)
 
-def songColor(color):
+def songColor(color: str):
     """Changes the color of the song text"""
     global songColorHex
     if color == "clear":
+        # if the command is to clear, not to set a color
         songColorHex = "Clear"
         # sets the field to "Clear" so that SBO-WS can add the default value
         print(f"{Time()}[RGBA]: Song text color cleared")
+        # color user inform
     else:
         songColorHex = color
         # sets the color to match
         print(f"{Time()}[RGBA]: Song text color set to: {color}")
+        # color user inform
 
-def textColor(color):
+def textColor(color: str):
     """Changes the color of the overlay text"""
     global textColorHex
     if color == "clear":
+        # if the command is to clear, not to set a color
         textColorHex = "Clear"
         # sets the field to "Clear" so that SBO-WS can add the default value
         print(f"{Time()}[RGBA]: Text color cleared")
+        # color user inform
     else:
         textColorHex = color
         # sets the color to match
         print(f"{Time()}[RGBA]: Text color set to: {color}")
+        # color user inform
 
-def barColor(color):
+def barColor(color: str):
     """Changes the color of the progress bar"""
     global barColorHex
     if color == "clear":
+        # if the command is to clear, not to set a color
         barColorHex = "Clear"
         # sets the field to "Clear" so that SBO-WS can add the default value
         print(f"{Time()}[RGBA]: Progress bar color cleared")
+        # color user inform
     else:
         barColorHex = color
         # sets the color to match
         print(f"{Time()}[RGBA]: Progress bar color set to: {color}")
+        # color user inform
 
-def overlayColor(color):
+def overlayColor(color: str):
     """Changes the color of the overlay borders"""
     global overlayColorHex
     if color == "clear":
+        # if the command is to clear, not to set a color
         overlayColorHex = "Clear"
         # sets the field to "Clear" so that SBO-WS can add the default value
         print(f"{Time()}[RGBA]: Overlay color cleared")
+        # color user inform
     else:
         overlayColorHex = color
         # sets the color to match
         print(f"{Time()}[RGBA]: Overlay color set to: {color}")
+        # color user inform
 
 
 
@@ -468,7 +700,7 @@ def overlayColor(color):
 
 
 
-def runSBOws():
+def runSBOws() -> subprocess.Popen:
     """Function to start the SBO-WS.exe"""
     with subprocess.Popen([sbowsPath], cwd=sbowsDir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as sbowsPrint:
         # opens the SBO-WS.exe file and reads its output
@@ -483,7 +715,7 @@ def runSBOws():
 
 
 
-def runSBOBot():
+def runSBOBot() -> subprocess.Popen:
     """Function to start the SBO Twitch Bot"""
     with subprocess.Popen([sboBotPath], cwd=sboBotDir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as sboBotPrint:
         # opens the SBO-Bot.exe file and reads its output 
@@ -499,8 +731,9 @@ def runSBOBot():
 
 
 def song():
-    """The function that handles all song data gathering and parsing, as well as pushing to C++ via text"""
+    """The function that handles all song data gathering and parsing, as well as pushing to the websocket via text"""
     global currentInfo, trackCounter, oldCount, songColorHex, textColorHex, barColorHex, overlayColorHex
+    global lastSong, lastArtist, lastPlaylistURL, updateProgress, csPlaylistID
     # pulls some global variables to local
 
     while True:
@@ -513,6 +746,9 @@ def song():
 
         csArtistString = []
         # creates an empty list for artists to get added into as the loop progresses
+
+        songChanged = False
+        # a function-contained boolean to check if the song changed later on (used to change the previous song/artist/url)
 
         csFull = currentInfo
         # gets a huge dictionary containing all the information about current song
@@ -613,14 +849,27 @@ def song():
             oldCount = trackCounter
             # updates the song counter
 
-        if not isLocalSong:
-            # can't access these if the playing song is local
+            songChanged = True
+            # changes the songChanged boolean to true, tells the loop to update the song names later
+
+        if not isLocalSong and csItem:
+            # can't access these if the playing song is local or csItem is None
             cstrackURL = csItem.get("external_urls")
             # stores the list that contains track's url
             csURL = cstrackURL.get("spotify")
             # grabs the spotify track URL
             csPlaylist = csFull.get("context")
-            # stores the list that contains the playlist url
+            # stores the list that contains the playlist/artist/album url
+            csContextType = csPlaylist.get("type")
+            # gets the context's type (this can be "playlist", "artist", "album" or "show")
+            if csContextType == "playlist":
+                # if the "context's" type is playlist
+                csPlaylistID = csPlaylist.get("uri").split(":")[-1]
+                # grabs the playlist ID by getting the playlist's URI (spotify:playlist:base62) and only taking the ID (base62)
+            else:
+                # if the context doesn't match
+                csPlaylistID = "Not a playlist"
+                # stores a preset string 
             csAlbumURLs = csAlbum.get("external_urls")
             # stores the album urls 
             sboAlbumURL = csAlbumURLs.get("spotify")
@@ -658,6 +907,9 @@ def song():
         sboURL = csURL
         # assigns the URL (this is the Spotify track URL)
 
+        now = round(time.time(), 0)
+        # saves the current time (SBO-WS can read this and see if it should do anything)
+
 
         ### SBO-WS Text File Writer ###
 
@@ -669,7 +921,6 @@ def song():
                     f"Album URL = {sboAlbumURL}\n" 
                     f"Spotify URL = {sboURL}\n"
                     f"Spotify Image = {csCover}\n"
-                    f"Playlist Name = {csPlaylist}\n"
                     f"Playlist URL = {csPlaylistURL}\n"
                     f"UNIX Start = {str(csUnixStart)}\n"
                     f"UNIX End = {str(csUnixEnd)}\n"
@@ -679,15 +930,31 @@ def song():
                     f"Text Color = {textColorHex}\n"
                     f"Bar Color = {barColorHex}\n"
                     f"Overlay Color = {overlayColorHex}\n"
+                    f"Last Song = {lastSong}\n"
+                    f"Last Artist = {lastArtist}\n"
+                    f"Last Playlist URL = {lastPlaylistURL}\n"
+                    f"Progress Mismatch = {updateProgress}\n"
+                    f"Timestamp = {now}"
                     )
         # merges all the song/color/other information together, split by newlines
-
+        
         with open(sbotxtPath, "w", encoding="utf-8") as txt:
-            # opens the songData text file
+            # opens the sbo text file
             txt.write(sboFull)
             # writes the full song information to the text file
-            print(f"{Time()}[INFO]: Song data file updated")
+            print(f"{Time()}[INFO]: sbo.txt updated")
             # prints an update
+
+        if songChanged:
+            # if the song has changed (changes after the text file to prevent the songs being the same
+            lastSong = sboSongName
+            # sets the previous song to match
+            lastArtist = sboArtistName
+            # sets the previous artist to match
+            lastPlaylistURL = csPlaylistURL
+            # sets the previous playlist URL match
+            songChanged = False
+            # shouldn't matter, since songChanged is self-contained and should default to false every loop, but just in case, sets to False
 
         songEvent.clear()
         # clears the event queue, ready to get new requests
@@ -700,13 +967,16 @@ def song():
 
 def looper():
     """Function that checks song info on a loop"""
-    global currentURI, currentInfo, pauseUpdated, trackCounter, callSong
+    global currentURI, currentInfo, pauseUpdated, trackCounter, callSong, updateProgress
     # grabs the "global" variables (outside the function) as local variables
     while True:
         # this loop checks if the song playing is the same as the previous update, waits if yes, updates the song to match if not
 
-        info = authPlayback()
-        # picks up all the info Spotify sends in an update
+        loopFuture = spotifyQueueInstance.queueManager("playback", None)
+        # sends a call to the Spotify API call queue manager to get a new playback dictionary
+
+        info = loopFuture.result()
+        # picks up all the info the Spotify API function sends (dictionary)
 
         if not info or not info.get("item"):
             # checks if the info has something and if it can be called
@@ -724,30 +994,53 @@ def looper():
         # stores name for display purposes
         songProg = int((info.get("progress_ms")) / 1000)
         # grabs the progress of the song at the pull time (ms/1000 = seconds)
-        songStart = int(time.time() - songProg)
+        timeNow = int(time.time())
+        # grabs the current time
+        songStart = int(timeNow - songProg)
         # stores the start time of the song by taking current time and subtracting progress
         playing = info.get("is_playing")
         # checks the pause state (True if playing, False if not)
 
         if currentURI is None:
-            # when the program first starts, the currentURI will be "None", this updates it
+            # when the program first starts, the currentURI will be "None", this updates it, along with other variables
             currentURI = songURI
             # sets the current song to match 
             storedStart = songStart
             # updates the timestamp to match
+            expectProg = int(timeNow - songStart)
+            # calculates the expected progress from the current time - the starting timestamp
+            progressMismatch = False
+            # initialises the progress boolean as false
             trackCounter += 1
             # adds 1 to counter
             songEvent.set()
             # since this only runs when the program first starts, sets an event immediately to song, to refresh data
             print(f"{Time()}[SONG]: First song: {songName}, has been successfully processed\n")
+            # user inform on first song
 
         songDur = int((info.get("item")).get("duration_ms")/1000)
         # grabs both the current time and length of the song (in seconds)
         songLeft = (songDur - songProg)
         # calculates the time left on the song
+        progressOffset = abs(songProg - expectProg)
+        # checks if the difference between the Spotify given progress and the calculated progress
 
-        if (currentURI != songURI) or ((songStart-5) > storedStart) or (pauseUpdated and playing):
-        # if there's a song change (if the URI has changed or the start timestamp is higher than the stored timestamp) or if the pause has been triggered
+        if (progressOffset >= 6):
+            # checks if there's a mismatch between expected and real progress of > 6 seconds (generally it's ~2-3 seconds)
+            progressMismatch = True
+            # if there is, sets the flag to true (will cause an update)
+            expectProg = int(timeNow - songStart)
+            # calculates the expected progress from the current time - the starting timestamp 
+        else:
+            # if the mismatch isn't big enough, re-assigns the variable wtih a new value
+            expectProg = int(timeNow - songStart)
+            # calculates the expected progress from the current time - the starting timestamp 
+
+        if (currentURI != songURI) or ((songStart-5) > storedStart) or (pauseUpdated and playing) or progressMismatch:
+        # if there's a reason to update the text file;
+        # a song change (if the URI has changed)
+        # the starting timestamps don't match
+        # if there's a pause or the start timestamp is higher than the stored timestamp) or if the pause has been triggered
 
             if not pauseUpdated:
                 # if console updates are enabled and this change wasn't triggered by a pause
@@ -765,6 +1058,12 @@ def looper():
             # sets an event to make song() update the text file
             callSong = False
             # if a new song is set, it'll run the song() normally, no need to separately run
+            if progressMismatch:
+                # checks if there was a progress mismatch
+                progressMismatch = False
+                # sets the mismatch flag to false
+                updateProgress += 1
+                # adds 1 to the updateProgress counter
 
             if pauseUpdated:
                 # if it's playing and the pauseUpdate has been set to true
@@ -775,7 +1074,7 @@ def looper():
                 trackCounter += 1
                 # adds 1 to counter (means track has changed)
 
-            time.sleep(2)
+            time.sleep(1.5)
             # waits a second
             continue
             # sends back to the start of looper to check for a new song (1 second checks after a song change to check for a song skip)
@@ -818,6 +1117,14 @@ def looper():
 
 ### Load Commands ###
 
+
+
+spotifyQueueInstance = SpotifyQueue(main, spotifyLock)
+# creates the Spotify queue instance
+spotifyQueueRunner = threading.Thread(target = spotifyQueueInstance.spotifyAPIPrepper)
+# creates the Spotify queue thread for APIPrepper
+spotifyQueueRunner.start()
+# starts the spotifyQueue thread
 
 
 songThread = threading.Thread(target = song)

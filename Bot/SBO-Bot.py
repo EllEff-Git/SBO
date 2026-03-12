@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 
-SBO_Bot_ver = "v0.3.11.1618"
+SBO_Bot_ver = "v0.3.13.0042"
 """The SBO Bot version (y.m.dd.hhmm)"""
 
 
@@ -121,6 +121,7 @@ defaultConfig = {
     "Playlist":      {"enable": True, "cooldown_Chatter": 600, "cooldown_Channel": 60, "required_Level": "all"},
     "Album":         {"enable": True, "cooldown_Chatter": 300, "cooldown_Channel": 30, "required_Level": "all"},
     "Song":          {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 30, "required_Level": "all"},
+    "Last Song":     {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 30, "required_Level": "all"},
     "Pause":         {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
     "Resume":        {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
     "Skip":          {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
@@ -158,7 +159,8 @@ print(f"Bot command configuration loaded successfully", flush=True)
 commandLevels = [
                 commandOptions["Playlist"]["required_Level"], 
                 commandOptions["Album"]["required_Level"], 
-                commandOptions["Song"]["required_Level"], 
+                commandOptions["Song"]["required_Level"],
+                commandOptions["Last Song"]["required_Level"],
                 commandOptions["Pause"]["required_Level"], 
                 commandOptions["Resume"]["required_Level"], 
                 commandOptions["Skip"]["required_Level"], 
@@ -184,7 +186,7 @@ for i in commandLevels:
     elif i == "subscriber" or i == "sub":
         commandLevelList.append(2)
         # if the command level is "subscriber"/"sub", assigns value 2
-    elif i == "vip":
+    elif i == "vip" or i == "artist":
         commandLevelList.append(3)
         # if the command level is "vip", assigns value 3
     elif i == "mod" or i == "moderator":
@@ -204,15 +206,16 @@ permissionMap = {
                 "Playlist": commandLevelList[0],
                 "Album": commandLevelList[1],
                 "Song": commandLevelList[2],
-                "Pause": commandLevelList[3],
-                "Resume": commandLevelList[4],
-                "Skip": commandLevelList[5],
-                "Previous": commandLevelList[6],
-                "Queue": commandLevelList[7],
-                "Song Color": commandLevelList[8],
-                "Text Color": commandLevelList[9],
-                "Bar Color": commandLevelList[10],
-                "Overlay Color": commandLevelList[11]
+                "Last Song": commandLevelList[3],
+                "Pause": commandLevelList[4],
+                "Resume": commandLevelList[5],
+                "Skip": commandLevelList[6],
+                "Previous": commandLevelList[7],
+                "Queue": commandLevelList[8],
+                "Song Color": commandLevelList[9],
+                "Text Color": commandLevelList[10],
+                "Bar Color": commandLevelList[11],
+                "Overlay Color": commandLevelList[12]
                 }
 """A map of required levels to use each command (0-6)"""
 # stores each of the command's required use level as a permission map that can be called by isCoolChatter to check
@@ -240,31 +243,50 @@ else:
 
 def dataPasser(command: str, arg2: str):
     """A function to send commands to SBO (takes the command and spotify URI/URL as parameters)"""
-    if arg2 == "":
-        # if the second argument is empty (is just a playback command, eg. skip)
-        msg = command
-        # creates a message from just the command
-    else:
-        # if the second argument isn't empty (means there's a link or color attached)
-        msg = f"{command}: {arg2}"
-        # creates a string from the command and argument (uri/url/color...) 
-    print(f"Sending command via PTP")
-    # user inform
+    try:
+        if arg2 == "":
+            # if the second argument is empty (is just a playback command, eg. skip)
+            msg = command
+            # creates a message from just the command
+        else:
+            # if the second argument isn't empty (means there's a link or color attached)
+            msg = f"{command}: {arg2}"
+            # creates a string from the command and argument (uri/url/color...) 
+        print(f"Sending command {command} via PTP")
+        # user inform
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as webClient:
-    # starts a new connection (with the same parameters)
-        webClient.connect(("127.0.0.1", 6666))
-        # connects to the existing host
-        webClient.sendall(msg.encode())
-        # sends the message
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as webClient:
+        # starts a new connection (with the same parameters)
+            webClient.connect(("127.0.0.1", 6666))
+            # connects to the existing host
+            webClient.sendall(msg.encode())
+            # sends the message
 
+            if command == "Playlist" or command == "Queue":
+                # if the command is specifically "Playlist" or "Queue", that means the reply requires data to be sent back from SBO
+                response = webClient.recv(1024).decode()
+                # gets the response from SBO
+                print(response, type(response)) # debug
+                return response
+                # returns to calling function (command)
+            else:
+                # if the command is anything else
+                None
+                # doesn't do anything, because that's expected
+
+    except Exception as err:
+        # if it fails for some reason
+        print(f"Failed to send the command via PTP: {err}", flush=True)
+        # prints an error inform
+        return None
+        # returns None
 
 
 ### Text File -> Dictionary ###
 
 
 
-def getData():
+def getData() -> dict:
     """Function to get the current playlist/track/whatever else from the sbo.txt file"""
 
     if not os.path.exists(sbotxtPath):
@@ -294,51 +316,46 @@ def getData():
 
 
 
-def isCoolChatter():
+def isCoolChatter(sender, command) -> bool:
     """Function to check if the calling chatter is authorised to use sent command"""
-    def chatterChecker(sender, command):
-        """Helper function, takes the sent message's context and the command as parameters"""
-        chatter = sender.author
-        # assigns the message sender's author as "chatter"
-        reqLevel = permissionMap.get(command)
-        # gets the required level from the permission map (all, subscriber, vip, mod)
-        currentLevel = 0
-        # sets the current level to 0 to start with (0=nothing, 1=any, 2=sub, 3=vip/artist,)
+    chatter = sender.author
+    # assigns the message sender's author as "chatter"
+    reqLevel = permissionMap.get(command, 3)
+    # gets the required level from the permission map (0-6, defaults to 3 if none is found)
+    currentLevel = 0
+    # sets the current level to 0 to start with (0=nothing, 1=any, 2=sub, 3=vip/artist,)
 
-        if chatter.subscriber:
-            # if the chatter is a subscriber
-            currentLevel = 2
+    if chatter.subscriber:
+        # if the chatter is a subscriber
+        currentLevel = 2
 
-        elif chatter.vip or chatter.artist:
-            # if the chatter is a VIP or artist
-            currentLevel = 3
+    elif chatter.vip or chatter.artist:
+        # if the chatter is a VIP or artist
+        currentLevel = 3
 
-        elif chatter.moderator:
-            # if the chatter is a moderator
-            currentLevel = 4
+    elif chatter.moderator:
+        # if the chatter is a moderator
+        currentLevel = 4
 
-        elif chatter.lead_moderator:
-            # if the chatter is a lead moderator
-            currentLevel = 5
+    elif chatter.lead_moderator:
+        # if the chatter is a lead moderator
+        currentLevel = 5
 
-        elif chatter.broadcaster:
-            # if the chatter is the streamer
-            currentLevel = 6
+    elif chatter.broadcaster:
+        # if the chatter is the streamer
+        currentLevel = 6
 
-        else:
-            # if the user isn't any of the above, assumes normal user (also fits admin, staff, etc)
-            currentLevel = 1
+    else:
+        # if the user isn't any of the above, assumes normal user (also fits admin, staff, etc)
+        currentLevel = 1
 
-        if reqLevel <= currentLevel:
-            # if the required level is lower or equal to the current chatter's level
-            return True
-            # tells isCoolChatter() the chatter is, in fact, cool enough
-        else:
-            return False
-            # tells isCoolChatter() the chatter, unfortunately, isn't cool enough :(
-
-    return chatterChecker
-    # returns the result to calling command
+    if reqLevel <= currentLevel:
+        # if the required level is lower or equal to the current chatter's level
+        return True
+        # returns the result; the chatter is, in fact, cool enough
+    else:
+        return False
+        # returns the result; the chatter, unfortunately, isn't cool enough :(
 
         
 
@@ -365,24 +382,6 @@ class Bot(commands.AutoBot):
         # stores the channel live status (False by default)
         self.botName = botName
         # stores the botname as a class variable (used for a print)
-
-### Command Error ###
-
-    async def event_command_error(self, context: commands.Context, error: commands.CommandError):
-        """Handles Twitch(IO) command errors"""
-        if isinstance(error, commands.CommandNotFound):
-            # if the command returns a "command not found"
-            return
-            # doesn't return anything, because it's expected behavior
-
-        if isinstance(error, commands.MissingRequiredArgument):
-            # if there's a missing
-            await context.reply(f"Missing parameter")
-            # sends a parameter message
-            return
-        
-        print(f"Error handling {context.command}: {error}", flush=True)
-        # logs an error if it's something else
 
 ### Live Check ###
 
@@ -574,7 +573,25 @@ class CommandComponent(commands.Component):
 
     @commands.Component.listener()
     async def event_message(self, payload: twitchio.ChatMessage) -> None:
-        """Message grabber"""
+        """Message grabber/listener"""
+
+### Command Error ###
+
+    async def event_command_error(self, context: commands.Context, error: commands.CommandError):
+        """Handles Twitch(IO) command errors"""
+        if isinstance(error, commands.CommandNotFound):
+            # if the command returns a "command not found"
+            return
+            # doesn't return anything, because it's expected behavior
+
+        if isinstance(error, commands.MissingRequiredArgument):
+            # if there's a missing
+            await context.reply(f"Missing parameter")
+            # sends a parameter message
+            return
+        
+        print(f"Error handling {context.command}: {error}", flush=True)
+        # logs an error if it's something else
 
 ### Playlist ###
 
@@ -594,20 +611,18 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
                     
-            if isCoolChatter()(context, "Playlist"):
-                sbo = getData()
-                # calls the data grabber to get the package (dictionary)
-                playlist = sbo.get("Playlist URL")
-                # gets the playlist URL from the dictionary 
-
-                if playlist == "No playlist":
-                    # if the playlist isn't set (SBO sets it to this if no playlist is active)
-                    await context.reply(f"{ttvName} is not currently listening to a playlist")
-                    # sends a playlist-less message
+            if isCoolChatter(context, "Playlist"):
+                # if the chatter is cool enough to use the playlist command
+                playlistName = dataPasser("Playlist", "")
+                # passes the command to dataPasser -> SBO
+                if playlistName:
+                    # if the string is returned
+                    await context.reply(f"{playlistName}")
+                    # replies with the returned message
                 else:
-                    # if the playlist return is anything else
-                    await context.reply(f"Current playlist: {playlist}")
-                    # sends a message with the playlist URL
+                    # if the string isn't returned for some reason
+                    await context.reply(f"Couldn't execute playlist command")
+                    # replies with fail message
 
 ### Album ###
 
@@ -627,7 +642,7 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
 
-            if isCoolChatter()(context, "Album"):
+            if isCoolChatter(context, "Album"):
                 sbo = getData()
                 # calls the data grabber to get the package (dictionary)
                 album = sbo.get("Album URL")
@@ -660,7 +675,7 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
 
-            if isCoolChatter()(context, "Song"):
+            if isCoolChatter(context, "Song"):
                 sbo = getData()
                 # calls the data grabber to get the package (dictionary)
                 track = sbo.get("Song Name")
@@ -674,13 +689,58 @@ class CommandComponent(commands.Component):
                     # if the song is local (SBO sets it to this if playback is local)
                     await context.reply(f"{ttvName} is listening to a local song")
                     # sends a local song message
-                elif trackURL == None:
+                elif trackURL == "None" or trackURL == None:
                     # if the song is empty
                     await context.reply(f"{ttvName} is not listening to Spotify")
+                    # replies with a no song detected message
                     print(f"If you see this message, but your Spotify is playing, check the status of SBO and Spotify", flush=True)
+                    # user inform in case something went wrong
                 else:
                     # if the song return is anything else
-                    await context.reply(f"Current song: {track} by {artist}. {trackURL}")
+                    await context.reply(f"Current song is: {track} by {artist}. {trackURL}")
+                    # sends a message with the song URL
+
+### Last Song ###
+
+    @commands.command(aliases=["last"])
+    async def lastSong(self, context: commands.Context) -> None:
+        """lastSong / last"""
+
+        if self.bot.channelLive and commandOptions["Last Song"]["enable"]:
+        # checks if the channel is live and the command is enabled
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Last Song"]["cooldown_Chatter"], commandOptions["Last Song"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter(context, "Last Song"):
+                sbo = getData()
+                # calls the data grabber to get the package (dictionary)
+                track = sbo.get("Last Song")
+                # gets the track from the dictionary
+                artist = sbo.get("Last Artist")
+                # gets the artist name from the dictionary
+                trackURL = sbo.get("Last Playlist URL")
+                # gets the track URL from the dictionary
+                
+                if trackURL == "A local song":
+                    # if the song is local (SBO sets it to this if playback is local)
+                    await context.reply(f"{ttvName} last listened to a local song")
+                    # sends a local song message
+                elif trackURL == "None" or trackURL == None:
+                    # if the song is empty
+                    await context.reply(f"Couldn't find previous song for {ttvName}, sorry!")
+                    # replies with a no last song message
+                    print(f"If you see this message, but your Spotify is playing (and the program has been up for more than 1 song), check the status of SBO and Spotify", flush=True)
+                    # user inform in case it fails
+                else:
+                    # if the song return is anything else
+                    await context.reply(f"Last song was: {track} by {artist}. {trackURL}")
                     # sends a message with the song URL
 
 ### Skip ###
@@ -701,7 +761,7 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
 
-            if isCoolChatter()(context, "Skip"):
+            if isCoolChatter(context, "Skip"):
                 # checks if the permissions are met
                 dataPasser("Skip", "")
                 # calls the dataPasser function
@@ -712,9 +772,9 @@ class CommandComponent(commands.Component):
 
 ### Pause ###
 
-    @commands.command()
+    @commands.command(aliases=["stop"])
     async def pause(self, context: commands.Context) -> None:
-        """pause"""
+        """pause and stop"""
 
         if self.bot.channelLive and commandOptions["Pause"]["enable"]:
         # checks if the channel is live and the command is enabled
@@ -728,7 +788,7 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
 
-            if isCoolChatter()(context, "Pause"):
+            if isCoolChatter(context, "Pause"):
                 dataPasser("Pause", "")
                 # calls the dataPasser function
 
@@ -753,7 +813,7 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
 
-            if isCoolChatter()(context, "Resume"):
+            if isCoolChatter(context, "Resume"):
                 # checks if the permissions are met
                 dataPasser("Resume", "")
                 # calls the dataPasser function
@@ -779,7 +839,7 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
 
-            if isCoolChatter()(context, "Previous"):
+            if isCoolChatter(context, "Previous"):
                 # checks if the permissions are met
                 dataPasser("Previous", "")
                 # calls the dataPasser function
@@ -805,7 +865,7 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
 
-            if isCoolChatter()(context, "Queue"):
+            if isCoolChatter(context, "Queue"):
                 # checks if the permissions are met
                 fullMsg = context.content
                 # gets the full message from the contents
@@ -816,11 +876,13 @@ class CommandComponent(commands.Component):
                         # must be one of: "song uri, id, or url", so it checks if the length matches an ID's 22 character length
                         # or if the song starts with https://open.spotify.com/ or spotify: (signs of a valid URL or track URI)
 
-                        dataPasser("Queue", songLink)
+                        trackName = dataPasser("Queue", songLink)
                         # calls the dataPasser function with the link
 
-                        await context.reply(f"Queued song")
-                        # replies to user
+                        if trackName:
+                            # if the track name is returned successfully (trackName actually has track + artist)
+                            await context.reply(f"{trackName}")
+                            # replies to user
 
                 except:
                     # if the command fails
@@ -845,7 +907,7 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
 
-            if isCoolChatter()(context, "Song Color"):
+            if isCoolChatter(context, "Song Color"):
                 fullMsg = context.content
                 # gets the full message from the contents
                 try:
@@ -882,7 +944,7 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
 
-            if isCoolChatter()(context, "Text Color"):
+            if isCoolChatter(context, "Text Color"):
                 fullMsg = context.content
                 # gets the full message from the contents
                 try:
@@ -919,7 +981,7 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
 
-            if isCoolChatter()(context, "Bar Color"):
+            if isCoolChatter(context, "Bar Color"):
                 fullMsg = context.content
                 # gets the full message from the contents
                 try:
@@ -956,7 +1018,7 @@ class CommandComponent(commands.Component):
                     return 
                     # stops the command from progressing 
 
-            if isCoolChatter()(context, "Overlay Color"):
+            if isCoolChatter(context, "Overlay Color"):
                 fullMsg = context.content
                 # gets the full message from the contents
                 try:

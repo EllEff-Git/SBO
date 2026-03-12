@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 # Required for getting status from server
 
 
-SBO_WSver = "v0.3.11.1457"
+SBO_WSver = "v0.3.12.1913"
 """The program version (y.m.dd.hhmm)"""
 
 
@@ -51,8 +51,6 @@ Config.read(ConfigPath, "utf8")
 
 httpPort = Config.getint("Function", "http_Port")
 """The websocket port (4-digit int)"""
-enableScrolling = Config.getboolean("Function", "enable_Text_Scrolling")
-"""Whether to enable text scrolling in HTML player (boolean)"""
 
 ### Visuals ###
 
@@ -123,13 +121,16 @@ allTypes = {
 
     "full": ["title", "artist", "album", "cover", "paused", "id", 
             "titleColor", "supportColor", "progressColor", "borderColor", 
-            "progress", "duration"]
+            "progress", "duration"],
+
+    "progress": ["progress"]
 }
 # a map of what types of fields are added to the payload based on the key given via payloadBuilder
 # color only updates the colors (no need to mess with the whole program)
 # progress only updates the timestamps (basically just ensuring everything's working smooth)
 # track updates all the song-related info (also includes timestamps to match them)
 # full updates everything (means both song and at least 1 color has changed)
+# progress means the progress change was too large (user skipped a part of song), just sets the progress to match
 
 
 print(f"HTML overlay program {SBO_WSver} starting", flush=True)
@@ -150,8 +151,7 @@ HTMLconfig = {
     "borderStyle": borderStyle,
     "borderColor": defaultBorderColor,
     "progressBarColor": defaultBarColor,
-    "progressBarPaused": progressBarPaused,
-    "enableScrolling": enableScrolling
+    "progressBarPaused": progressBarPaused
 }
 # assembles a config dictionary that will get passed to HTML/localhost
 
@@ -188,6 +188,7 @@ def readSBO() -> dict:
         artistName = artistPrefix + " " + artistName
         # adds it to the start of the string
         sbo["Artist Name"] = artistName
+        # replaces the original value with the new one
 
     if albumPrefix:
         # if albumPrefix isn't empty (config)
@@ -195,15 +196,16 @@ def readSBO() -> dict:
         albumName = albumPrefix + " " + albumName
         # adds it to the start of the string
         sbo["Album Name"] = albumName
+        # replaces the original value with the new one 
 
     sbo["Pause State"] = sbo.get("Pause State", "False").strip().lower() == "true"
-    # grabs the pause state and ensures it's a boolean here
+    # grabs the pause state and ensures it's a boolean here (checks if the lowercase version of this string == "true", stores that if check result)
 
     return sbo
     # returns the dictionary to the calling function
 
 
-def unixConverter(sbo: dict) -> int:
+def unixConverter(sbo: dict) -> tuple[int, int]:
     """Function that turns UNIX timestamps into progress and duration times"""
     try:
         songStart = int(sbo.get("UNIX Start"))
@@ -225,7 +227,7 @@ def unixConverter(sbo: dict) -> int:
         return 0, 1
 
 
-def noneRemover(string: str) -> str:
+def noneRemover(string: str):
     """Function that ensures no "None" values are sent through payload (None breaks JS)"""
     return None if string in (None, "None", "") else string
     # if the given string matches None, "None" or "", it returns None - otherwise returns the string
@@ -312,6 +314,15 @@ async def websocket(ws: WebSocket):
         oldTrackID = initialPayload["id"]
         # stores the ID to check for a song change
 
+        oldProgressCheck = sbo.get("Progress Mismatch", 0)
+        # stores the first progress mismatch count
+
+        oldPauseState = sbo.get("Pause State", False)
+        # grabs the first pause state boolean
+
+        oldTimestamp = sbo.get("Timestamp", round(time.time(), 0))
+        # stores the initial timestamp (or a rounded timestamp of current)
+
         await ws.send_text(payloadBuilder(initialPayload, "full", allTypes["full"]))
         # sends the payload with "track" type for when payloadBuilder returns it
 
@@ -324,36 +335,75 @@ async def websocket(ws: WebSocket):
             sbo = readSBO()
             # calls readSBO and then stores the dictionary here as sbo
             
-            songProg, songDur = unixConverter(sbo)
-            # stores the progress and duration times from unixConverter
+            fileTimestamp = sbo.get("Timestamp", round(time.time(), 0))
+            # gets the timestamp from the file (or uses current time if it can't find any)
 
-            payload = {
-                "title": sbo.get("Song Name", ""),
-                "artist": sbo.get("Artist Name", ""),
-                "album": sbo.get("Album Name", ""),
-                "cover": sbo.get("Spotify Image", ""),
-                "paused": sbo.get("Pause State", False),
-                "id": sbo.get("Track ID", ""),
-                "titleColor": noneRemover(sbo.get("Song Color")),
-                "supportColor": noneRemover(sbo.get("Text Color")),
-                "progressColor": noneRemover(sbo.get("Bar Color")),
-                "borderColor": noneRemover(sbo.get("Overlay Color"))
-            }
-            # constructs a new payload
+            if (fileTimestamp != oldTimestamp):
+                # if the timestamps are different (means SBO has updated *something*)
 
-            currentColors = {
-                "titleColor": payload["titleColor"],
-                "supportColor": payload["supportColor"],
-                "progressColor": payload["progressColor"],
-                "borderColor": payload["borderColor"]
-            }
-            # stores a map of the newly updated colors
+                ### PAYLOAD COMPARISON ###
 
-            if payload != lastPayload:
-                # if the payloads aren't the same at this stage (means there's some data to update HTML)
-                # if they are, just skips to sleep and restarts loop
-                lastPayload = payload.copy()
-                # changes the temp payload variable to match
+                oldTimestamp = fileTimestamp
+                # sets the current timestamp
+
+                songProg, songDur = unixConverter(sbo)
+                # stores the progress and duration times from unixConverter
+
+                currentProgressCheck = sbo.get("Progress Mismatch")
+                # stores the current progress mismatch count
+
+                currentPauseState = sbo.get("Pause State", False)
+                # stores the current pause state
+
+                payload = {
+                    "title": sbo.get("Song Name", ""),
+                    "artist": sbo.get("Artist Name", ""),
+                    "album": sbo.get("Album Name", ""),
+                    "cover": sbo.get("Spotify Image", ""),
+                    "paused": sbo.get("Pause State", False),
+                    "id": sbo.get("Track ID", ""),
+                    "titleColor": noneRemover(sbo.get("Song Color")),
+                    "supportColor": noneRemover(sbo.get("Text Color")),
+                    "progressColor": noneRemover(sbo.get("Bar Color")),
+                    "borderColor": noneRemover(sbo.get("Overlay Color"))
+                }
+                # constructs a new payload
+
+                currentColors = {
+                    "titleColor": payload["titleColor"],
+                    "supportColor": payload["supportColor"],
+                    "progressColor": payload["progressColor"],
+                    "borderColor": payload["borderColor"]
+                }
+                # stores a map of the newly updated colors
+
+                if payload != lastPayload:
+                    # if a pause, song change or any color change has happened *or* progress has a mismatch
+                    lastPayload = payload.copy()
+                    # changes the temp payload variable to match
+                    payloadDiff = True
+                    # sets the boolean to True
+                else:
+                    payloadDiff = False
+                    # sets the boolean to False
+
+                payload["progress"] = songProg
+                payload["duration"] = songDur
+                # adds the timestamps *after* checking against the old version
+
+                ### PROGRESS CHECK ###
+
+                if currentProgressCheck != oldProgressCheck:
+                    # checks if the old progress check count is the same as new (has there been a new occurance of a progress mismatch)
+                    oldProgressCheck = currentProgressCheck
+                    # saves the new value as the old
+                    progressMismatch = True
+                    # stores info on whether or not SBO registered a new progress mismatch
+                else:
+                    # if they are the same
+                    progressMismatch = False
+
+                ### TRACK ID CHECK ###
 
                 if payload["id"] != oldTrackID:
                     # checks if the old track ID matches the new one (song change)
@@ -366,32 +416,60 @@ async def websocket(ws: WebSocket):
                     songChange = False
                     # sets boolean to False
 
-                payload["progress"] = songProg
-                payload["duration"] = songDur
-                # adds the timestamps *after* checking against the old version
+                ### COLOR CHECK ###
 
                 if currentColors != lastColors:
                     # if any of the colors have changed
-                    if songChange:
-                        # if the song has also changed
-                        await ws.send_text(payloadBuilder(payload, "full", allTypes["full"]))
-                        # sends a full payload (track + colors)
-                    else:
-                        # if the song hasn't changed
-                        await ws.send_text(payloadBuilder(payload, "color", allTypes["color"]))
-                        # sends only a color payload
+                    lastColors = currentColors.copy()
+                    # copies the current colors to the previous' variable
+                    colorChange = True
+                    # sets color boolean to True
                 else:
-                    # if no colors have changed (must mean something in the track has)
+                    # if none of the colors have changed
+                    colorChange = False
+                    # sets color boolean to False
+
+                ### PAUSE CHECK ###
+
+                if currentPauseState != oldPauseState:
+                    # checks if the previous pause state was the same
+                    oldPauseState = currentPauseState
+                    # reassigns variable to match
+                    pauseChange = True
+                    # sets pause boolean to True
+                else:
+                    pauseChange = False
+                    # sets pause boolean to False
+
+                ### PAYLOAD SELECTION ###
+
+                if colorChange and (songChange or pauseChange or progressMismatch):
+                    # if the color has changed AND *any* of the other 3
+                    await ws.send_text(payloadBuilder(payload, "full", allTypes["full"]))
+                    # sends a full payload (track + colors)
+
+                elif colorChange:
+                    # if the color has changed, all the other 3 haven't
+                    await ws.send_text(payloadBuilder(payload, "color", allTypes["color"]))
+                    # sends only a color payload
+
+                elif songChange or pauseChange:
+                    # if either of the track elements has changed, color hasn't (progress doesn't matter because it's included in track)
                     await ws.send_text(payloadBuilder(payload, "track", allTypes["track"]))
                     # sends the track payload
 
+                else:
+                    # if there's a progress mismatch, but no song or pause change and no color update
+                    await ws.send_text(payloadBuilder(payload, "progress", allTypes["progress"]))
+                    # sends the progress payload
+        
             await asyncio.sleep(2)
             # sleeps for 2 seconds between
 
     except (WebSocketDisconnect, ConnectionResetError):
         # any "disconnect" (leaving the site, refreshing, etc)
         pass
-        # doesn't do anything
+        # doesn't do anything (no need to spam console)
 
     except Exception as ex:
         # if it somehow fails
