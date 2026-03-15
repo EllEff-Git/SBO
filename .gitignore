@@ -4,6 +4,7 @@
 Data/*
 WS/*
 !WS/SBO-WS.py
+!WS/keyframes.txt
 Bot/*
 !Bot/SBO-Bot.py
 !Bot/commandConfig.ini
@@ -14,3 +15,4 @@ SBO.xcf
 SBO.spec
 SBO.exe
 *.zip
+colorStringsTemp.json

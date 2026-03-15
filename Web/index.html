@@ -2,39 +2,41 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.3.12.1913</title>
+<title>Spotify Overlay v0.3.15.0552</title>
 
 <script>
 
 
-// initialises last track as null on start
-let lastTrackID = null;
+// initialises last track, player timeout start and playerIntervalID as null on start
+let lastTrackID = null, startTime = null, playerIntervalID = null;
 
 // timer/progress bar variables
-let currentProgress, lastPercentage = 0;
-let duration, tempProgress = 1;
+let currentProgress = 0, lastPercentage = 0;
+let duration = 1, tempProgress = 1;
 let lastUpdateTime = Date.now();
 
-// initialises a field size variable
-let maxInfoSize = 0;
+// initialises player visual variables
+let maxInfoSize = 0, playerTimeout = 0;
 
-// initialises a boolean for pause state
-let isPaused = false;
+// initialises a boolean for pause state stuff
+let isPaused = false, isHidden = false;
 
 // initialises global variables (websocket + all the elements)
-let ws, player, cover, titleElement, artistElement, albumElement, bar, timer;
+let ws, player, cover, border, background, titleElement, artistElement, albumElement, bar, timer;
 
 // initialises global color variables
 let defaultTitleColor, defaultSupportColors, defaultBorderColor, defaultProgressColor;
 
 // initialises widths for player 
-let playerWidthRaw, playerHeightRaw = 0;
+let playerWidthRaw = 0, playerHeightRaw = 0;
 
 // waits for the HTML to be fully loaded, then loads the rest
 document.addEventListener("DOMContentLoaded", () => {
     // updates global constants to match elements 
     player = document.getElementById("player");
     cover = document.getElementById("cover");
+    border = document.getElementById("border");
+    background = document.getElementById("background");
     titleElement = document.getElementById("title");
     artistElement = document.getElementById("artist");
     albumElement = document.getElementById("album");
@@ -62,9 +64,12 @@ document.addEventListener("DOMContentLoaded", () => {
         // stores the config colors in these "default variables"
         defaultTitleColor = Config.titleColor;
         defaultSupportColors = Config.supportColors;
-        defaultBorderColor = Config.borderColor;
         defaultProgressColor = Config.progressBarColor;
+        defaultBorderColor = Config.borderColor;
 
+        // checks if the border color has more than 1 color (applies gradient formatting if yes)
+        gradientCheck(Config.borderColor);
+        
         // player size + opacity
         document.documentElement.style.setProperty("--playerWidth", playerWidthRaw + "px");
         document.documentElement.style.setProperty("--playerHeight", playerHeightRaw + "px")
@@ -77,12 +82,12 @@ document.addEventListener("DOMContentLoaded", () => {
         document.documentElement.style.setProperty("--supportStyles", Config.supportStyles);
         document.documentElement.style.setProperty("--supportWeights", Config.supportWeights);
         document.documentElement.style.setProperty("--supportColors", defaultSupportColors);
-        // player border style
-        document.documentElement.style.setProperty("--borderStyle", Config.borderStyle);
-        document.documentElement.style.setProperty("--borderColor", defaultBorderColor);
         // progress bar style
         document.documentElement.style.setProperty("--pbcNorm", defaultProgressColor);
         document.documentElement.style.setProperty("--pbcPause", Config.progressBarPaused);
+
+        // gets the timeout duration to hide player
+        playerTimeout = (Config.playerTimeout * 1000);
 
         // sets a constant for the max size the info fields can be (removes the padding and image size from player size)
         maxInfoSize = (playerWidthRaw - (playerHeightRaw * 0.9) - 12);
@@ -119,8 +124,7 @@ document.addEventListener("DOMContentLoaded", () => {
             // opens and stores the data
             const data = JSON.parse(event.data);
             
-            // console.log("Payload:", data) // D E B U G
-            // console.log("Data type:", data.type) // D E B U G
+            console.log("Payload type:", data.type, "data:", data) // debug, shows the payload information in the browser console
 
             // "data.type" (given by SBO-WS in payload) determines what updates are performed:
             // "full" does both updates below, "track" runs player-related changes and timestamps, "color" only colors;
@@ -133,15 +137,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 // assigns the boolean from the payload
                 isPaused = data.paused
                 // adds/removes the paused element style, based on the payload boolean for pause state
-                if(isPaused) player.classList.add("paused");
-                else player.classList.remove("paused");
-                
-                // calls the length-checking function to get the size of the title field
-                checkTextSize(titleElement);
-                // calls the length-checking function to get the size of the artist field
-                checkTextSize(artistElement);
-                // calls the length-checking function to get the size of the album field
-                checkTextSize(albumElement);
+                if(isPaused) {
+                    player.classList.add("paused");
+                    // if the player interval isn't running yet (is null)
+                    if (playerIntervalID === null) {
+                        // starts a checker every 1 second to see if player should be hidden
+                        playerIntervalID = setInterval(playerHider, 1000);
+                    }
+                }
+                // if the playback isn't paused
+                else {
+                    // removes the pause element style from the classList
+                    player.classList.remove("paused");
+                }
 
                 // sets the timer variables (with fallbacks)
                 currentProgress = data.progress || 0;
@@ -175,6 +183,13 @@ document.addEventListener("DOMContentLoaded", () => {
                         // grabs the image, link -> picture
                         cover.src = data.cover;
 
+                        // calls the length-checking function to get the size of the title field
+                        checkTextSize(titleElement);
+                        // calls the length-checking function to get the size of the artist field
+                        checkTextSize(artistElement);
+                        // calls the length-checking function to get the size of the album field
+                        checkTextSize(albumElement);
+
                         // sets the opacities back to 1
                         fadeElements.forEach(element => {
                             // sets the transition time back to full opacity
@@ -184,9 +199,23 @@ document.addEventListener("DOMContentLoaded", () => {
                         // the time to wait (in ms)
                     }, 400)
                 }
+                // separately checks if the title is different in the data than it is here (in case of "paused on: ")
+                if (titleElement.textContent !== data.title) {
+                    // sets the title to match, with a small fade
+                        title.style.transition = "opacity 0.5s"
+                        title.style.opacity = 0;
+                    setTimeout(() => {
+                        titleElement.textContent = data.title || "";
+                        checkTextSize(titleElement)
+                        title.style.transition = "opacity 0.5s"
+                        title.style.opacity = 1;
+                    }, 250)
+                }
             }
             // if the data type is "color" or "full" (meaning a chat command -> color change)
             if (data.type === "color" || data.type === "full") {
+                const emptyKeyframes = "@keyframe"
+                gradientCheck(data.borderColor, emptyKeyframes)
                 // calls the function to change the colors
                 colorChanger(data);
             }
@@ -195,16 +224,52 @@ document.addEventListener("DOMContentLoaded", () => {
                 // updates the progress variable to match real-ish time
                 currentProgress = data.progress;
             }
+            // if the data type is "keyframes" (used !overlayColor with multiple colors)
+            if (data.type === "keyframes") {
+                // user inform in console
+                console.log("Received keyframe command, loading new keyframes")
+                // grabs the latest keyframe file from websocket
+                fetch("/keyframes.txt")
+
+                // loads the keyframes as KF
+                .then(res => res.text())
+                .then(KF =>{
+                    //console.log("Keyframes file contains:", KF); // debug
+                    // calls the gradient check with the colors and the keyframes
+                    gradientCheck(data.colors, KF)
+                })
+                .catch(err => {
+                    console.error("Error grabbing keyframes", err);
+                })
+            }
+            // if the player isn't paused, regardless of payload type
+            if (!isPaused) {
+                // sets the player hider variables to null
+                playerIntervalID = null;
+                // sets the start time to null so it can restart
+                startTime = null;
+                // sets a transition and opacity
+                player.style.transition = "opacity 1s";
+                player.style.opacity = 1;
+                background.style.transition = "opacity 1s";
+                background.style.opacity = 1;
+                border.style.transition = "opacity 1s";
+                border.style.opacity = 1;
+                // sets the flag back to false so it can rerun if necessary
+                isHidden = false;
+            }
         }; // closes the payload check
     });
 });
 
 </script>
 
-<!-- the player element, contains everything-->
+<!-- the player element, contains all elements -->
 <div id="player">
-    <!-- the background element, sits below everything-->
+    <!-- the background element, sits below everything for depth/blur -->
     <div id="background"></div>
+    <!-- border, is... a border -->
+    <div id="border"></div>
     <!-- the image/cover -->
     <img id="cover" src="">
     <!-- the field container-->
@@ -219,7 +284,7 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
         <!-- the text wrapper for the album field-->
         <div class="text-wrapper">
-            <div class="album" id="album"></div>
+           <div class="album" id="album"></div>
         </div>
         <!-- the progress container, houses the progress bar and timer-->
         <div id="progress-container">
@@ -266,40 +331,102 @@ body, html, #background, #player {
 
 /* a background element behind the player, added to add more blur/opaqueness */
 #background {
+    /* position should be absolute, to ensure it doesn't get squished by other elements in player */
     position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
-    /* how rounded the corners are */
-    border-radius: 12px;
-    /* color and opacity of the background */
-    background: rgba(0,0,0,0.5);
-    /* how much blur to apply */
-    backdrop-filter: blur(18px);
-    /* webkit tells specific systems to use the backdrop filter */
-    z-index: 0;
+    /* 0 in everything ensures it follows the player settings */
+    top: 0; bottom: 0; left: 0; right: 0;
+    /* how rounded the player corners should be */
+    /* border-radius: 12px; - disabled because "border" element is on top, re-enable if disabling border */ 
+    /* color (first 3) and opacity of the background */
+    background: rgba(0, 0, 0, 0.75);
+    /* padding matches player */
+    padding: 12px;
+    /* matches the player size */
+    width: var(--playerWidth, 420px);
+    height: var(--playerHeight, 90px);
+    /* z-index of background should be the lowest out of all*/
+    z-index: 1;
 }
 
-/* the player, aka the full background for all elements */
+/* the player, aka the full base for all elements */
 #player {
+    /* positioning of the player */
+    position: relative;
+    /* how far from the top-left corner the player should be */
+    top: 20px; bottom: 0px; left: 20px; right: 0px;
     display: flex;
     align-items: center;
     /* space between the picture and other elements */
     gap: 12px;
     /* first 3 are color, the last number in background dictates how opaque it is */
     background: rgba(25, 25, 25, var(--playerOpacity));
-    /* how much "padding" there is between each element (text, bar, picture, edges) */
-    padding: 12px;
     /* how rounded the player corners should be */
-    border-radius: 12px;
-    /* the border dictates the thickness, color and existence of, well, a border around the player*/
-    border: 2px var(--borderStyle) var(--borderColor);
-    /* where to place the player (X=0, Y=0 puts it in the top left corner */
-    transform: translateY(0px);
-    transform: translateX(0px);
+    /* border-radius: 12px; - disabled because "border" element is on top, re-enable if disabling border */ 
+    /* how much space there is on the outside of the picture/text/timer elements */
+    padding: 12px;
     /* player sizes */
     width: var(--playerWidth, 420px);
     height: var(--playerHeight, 90px);
     /* the depth of the player (must be higher than background, equal or lower than elements) */
-    z-index: 1;
+    z-index: 2;
+}
+
+/* border element around the player */
+#border {
+    /* must be absolute, otherwise it turns into a piece of "player" */
+    position: absolute;
+    /* the border positioning, top and left should be the negatives of the border thickness */
+    top: -5px; bottom: 0px; left: -5px; right: 0px;
+    display: flex;
+    /* padding matches player */
+    padding: 12px;
+    /* uses the player's size */
+    width: var(--playerWidth, 420px);
+    height: var(--playerHeight, 90px);
+    /* how rounded the player corners should be, around 2x the border thickness is fairly rounded */
+    border-radius: 10px;
+    /* sets the background to not have color, so that the player can stay visible */
+    background-color: transparent;
+    overflow: hidden;
+    /* how thick the border is (5px is a good "it's there, but not massive") */
+    border-width: 5px;
+    /* the "style" of the border (could be dotted, dashed, solid...) */
+    border-style: solid;
+    /* sets the animation, time and how to perform it (doesn't do anything on startup, only once >1 color is passed via !overlayColor) */
+    animation: gradientBorder 15s linear infinite alternate;
+    /* a z-index of 3 ensures it stays on top of the player element */
+    z-index: 3;
+}
+
+/* I was messing with how to force rounded corners, and while this wasn't the fix, I did find this had some pretty cool effects
+    as such, I'll just leave this here, rather than delete it :) 
+    it adds a second border in between the player and the real border, with mega rainbow potential 
+#border::before {
+    z-index: 2;
+    border-radius: inherit;
+    border: 5px solid transparent;
+    background: transparent;
+    border-image-source: linear-gradient(45deg, red, yellow);
+    border-image-slice: 1;
+    animation: borderAnimation 5s infinite linear;
+} */
+
+/* border class that gets activated when more than 2 overlay colors are set */
+#border.gradient {
+    /* should set the border radius (doesn't?) */
+    border-radius: 10px;
+    /* sets the animation, time and how to perform it */
+    animation: var(--gradient-animation) 15s linear infinite alternate;
+}
+
+/* border class that gets set when only one color is given */
+#border.solid {
+    /* resets the "image" */
+    border-image: none;
+    /* sets the color to just the variable (either given color or default via fallback) */
+    border-color: var(--borderColor);
+    /* resets the animation */
+    animation: none;
 }
 
 /* album picture */
@@ -318,8 +445,8 @@ body, html, #background, #player {
     background: #424242;
     /* doesn't allow it to shrink */
     flex-shrink: 0;
-    /* z-index of 2 is higher than the player itself */
-    z-index: 2;
+    /* z-index of 3 is higher than the player itself */
+    z-index: 3;
 }
 
 /* main info, all player fields inherit this (text, bar, timer) */
@@ -331,7 +458,7 @@ body, html, #background, #player {
     overflow: hidden;
     flex: 1;
     /* higher than player */
-    z-index: 2;
+    z-index: 3;
     /* inherits size from player and cover */
     width: auto;
     max-width: none;
@@ -672,6 +799,112 @@ function colorChanger(data) {
         "--pbcNorm",
         data.progressColor && data.progressColor !== "Clear" ? data.progressColor : defaultProgressColor
     );
+}
+
+// function to check if the player should be hidden 
+function playerHider() {
+    // if the player timeout config is set to 0 (means disabled)
+    if (playerTimeout === 0) {
+        // returns (stops running the function)
+        return;
+    }
+    // checks if the start time has been changed since definition
+    if (startTime === null) {
+        // if not, stores current time (in ms)
+        startTime = Date.now();
+    }
+    // gets the current time every loop
+    const currentTime = Date.now();
+
+    // if the time between pause start and now is > the set timeout time
+    if ((currentTime - startTime) > playerTimeout) {
+        // sets a transition and opacity 
+        player.style.transition = "opacity 2s";
+        player.style.opacity = 0;
+        background.style.transition = "opacity 2s";
+        background.style.opacity = 0;
+        border.style.transition = "opacity 2s";
+        border.style.opacity = 0;
+    // sets the flag to true so it can be detected when playback continues
+    isHidden = true;
+    // stops the loop (clears the 1s checking)
+    clearInterval(playerIntervalID);
+    }
+}
+
+// function to check if gradient effect should be applied (checks if more than 1 color is passed, creates a dynamic color gradient)
+function gradientCheck(colorList, keyframes) {
+
+    // defines the (empty) array for colors to be put into
+    let colors;
+
+    // if the color "list" is actually a string (when it's 1 color)
+    if (typeof colorList === "string") {
+        // directly trims the "list" and just uses the one single color as the list
+        colors = colorList.trim() === "" ? [] : [colorList.trim()];
+    }
+    // if the color list is undefined (no colors given in borderColor)
+    else if (typeof colorList === "undefined") {
+        colors = "default";
+    }
+    else {
+        // sets the "colors" variable by checking if the list is a true list (array) and applying color splitting/trimming
+        colors = Array.isArray(colorList) ? colorList : colorList.split(',').map(color => color.trim());
+    }
+
+    // clears the current effect
+    border.classList.remove("gradient", "solid");
+    // clears the current animation
+    border.style.animation = "";
+    
+    // takes the previous border gradient style
+    const previousStyle = document.querySelector(`#keyframes-gradientBorder`)
+    // if there's already a style
+    if (previousStyle) {
+        // removes it
+        previousStyle.remove();
+    }
+
+    // checks how many colors were given
+    if (colors === "default") {
+        // user inform
+        console.log("Found no colors, setting border to default color")
+        // sets the background to the default color
+        document.documentElement.style.setProperty("--borderColor", defaultBorderColor);
+        // sets the solid style
+        border.classList.add("solid");
+    }
+    // if only one color was given (config default, config goes straight here)
+    else if (colors.length === 1) {
+        // user inform
+        console.log("Found 1 color, setting border to color")
+        // sets the background to the default color
+        document.documentElement.style.setProperty("--borderColor", colors[0]);
+        // sets the solid style
+        border.classList.add("solid");
+    }
+    // if two or more colors were given
+    else {
+        // user inform
+        console.log("Found", colors.length , "colors, setting border to gradient with given colors")
+
+        // defines the gradient movement and colors in a variable
+        let gradientAnimation = `linear-gradient(45deg, ${colors.join(", ")})`
+        // creates a new style element for the keyframes to be injected into
+        let styleElement = document.createElement("style");
+
+        // sets the keyframes from the arguments into the style element
+        styleElement.innerHTML = keyframes;
+
+        // appends the style element into the document head
+        document.head.appendChild(styleElement);
+        // sets the gradient animation variable (uses the predetermined animation and the name from the WS builder)
+        document.documentElement.style.setProperty("--gradient-animation", "gradientBorder");
+        // sets the variable to match the new definition with the previously made variable
+        document.documentElement.style.setProperty("--borderColor", gradientAnimation);
+        // adds the gradient to the "class list" (enables gradient animation with set colors)
+        border.classList.add("gradient");
+    }
 }
 
 </script>

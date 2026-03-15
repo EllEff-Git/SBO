@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 
-SBO_Bot_ver = "v0.3.13.0042"
+SBO_Bot_ver = "v0.3.15.0552"
 """The SBO Bot version (y.m.dd.hhmm)"""
 
 
@@ -63,9 +63,6 @@ else:
 print(f"Starting SBO Twitch Bot {SBO_Bot_ver}", flush=True)
 # quick user update on status
 
-conduitPath = os.path.join(directory, "conduit.txt")
-"""The path to conduit.txt (SBO/Bot/conduit.txt)"""
-
 sbotxtPath = os.path.join(directory, "..", "WS", "sbo.txt")
 """The path to sbo.txt (SBO/WS/sbo.txt)"""
 
@@ -78,9 +75,10 @@ Config.read(ConfigPath, "utf8")
 
 commandPrefix = Config.get("Twitch-Bot", "command_Prefix", fallback="!")
 """The symbol or string to use in front of all commands (string)"""
-
 cooldownMessage = Config.getboolean("Twitch-Bot", "enable_Cooldown_Messages", fallback=False)
 """Whether to reply to chatter with a cooldown message if command is on cooldown"""
+webClientPort = (Config.getint("Function", "http_Port", fallback=6666) + 1)
+"""The port to use for the PTP connection (http_Port + 1, int)"""
 
 bot_Client_ID = Config.get("Twitch-Bot", "dev_Client_ID")
 """The Twitch Client ID from config"""
@@ -106,6 +104,9 @@ except:
     missingID = True
     # this will trip the check at the bottom and stop the program
 
+playbackControlsDisabled = False
+"""A boolean to check if the playback controls should be disabled (meant as a temporary setting)"""
+
 
 ### Command Configuration ###
 
@@ -118,19 +119,21 @@ chatCommandConfig.read(CmdCfgPath, "utf8")
 # Where the command config is read from, with UTF-8 format
 
 defaultConfig = {
-    "Playlist":      {"enable": True, "cooldown_Chatter": 600, "cooldown_Channel": 60, "required_Level": "all"},
-    "Album":         {"enable": True, "cooldown_Chatter": 300, "cooldown_Channel": 30, "required_Level": "all"},
-    "Song":          {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 30, "required_Level": "all"},
-    "Last Song":     {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 30, "required_Level": "all"},
-    "Pause":         {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
-    "Resume":        {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
-    "Skip":          {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
-    "Previous":      {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
-    "Queue":         {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
-    "Song Color":    {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
-    "Text Color":    {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
-    "Bar Color":     {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
-    "Overlay Color": {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
+    "Playlist":         {"enable": True, "cooldown_Chatter": 600, "cooldown_Channel": 60, "required_Level": "all"},
+    "Album":            {"enable": True, "cooldown_Chatter": 300, "cooldown_Channel": 30, "required_Level": "all"},
+    "Song":             {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 30, "required_Level": "all"},
+    "Last Song":        {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 30, "required_Level": "all"},
+    "Pause":            {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
+    "Resume":           {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
+    "Skip":             {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
+    "Previous":         {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
+    "Queue":            {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "vip"},
+    "Song Color":       {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
+    "Text Color":       {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
+    "Bar Color":        {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
+    "Overlay Color":    {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
+    "Custom Color":     {"enable": True, "cooldown_Chatter": 180, "cooldown_Channel": 60, "required_Level": "subscriber"},
+    "Playback Control": {"enable": True, "cooldown_Chatter": 100, "cooldown_Channel": 30, "required_Level": "moderator"}
 }
 # a map of the default loaded settings 
 
@@ -169,7 +172,9 @@ commandLevels = [
                 commandOptions["Song Color"]["required_Level"],
                 commandOptions["Text Color"]["required_Level"],
                 commandOptions["Bar Color"]["required_Level"],
-                commandOptions["Overlay Color"]["required_Level"]
+                commandOptions["Overlay Color"]["required_Level"],
+                commandOptions["Custom Color"]["required_Level"],
+                commandOptions["Playback Control"]["required_Level"]
                 ]
 """A list of all the command requirement levels"""
 # takes all the user level requirement variables and puts into a list
@@ -215,7 +220,9 @@ permissionMap = {
                 "Song Color": commandLevelList[9],
                 "Text Color": commandLevelList[10],
                 "Bar Color": commandLevelList[11],
-                "Overlay Color": commandLevelList[12]
+                "Overlay Color": commandLevelList[12],
+                "Custom Color": commandLevelList[13],
+                "Playback Control": commandLevelList[14]
                 }
 """A map of required levels to use each command (0-6)"""
 # stores each of the command's required use level as a permission map that can be called by isCoolChatter to check
@@ -242,7 +249,7 @@ else:
 
 
 def dataPasser(command: str, arg2: str):
-    """A function to send commands to SBO (takes the command and spotify URI/URL as parameters)"""
+    """A function to send commands to SBO (takes the command / optionally: a string argument to pass to SBO)"""
     try:
         if arg2 == "":
             # if the second argument is empty (is just a playback command, eg. skip)
@@ -252,27 +259,43 @@ def dataPasser(command: str, arg2: str):
             # if the second argument isn't empty (means there's a link or color attached)
             msg = f"{command}: {arg2}"
             # creates a string from the command and argument (uri/url/color...) 
-        print(f"Sending command {command} via PTP")
+
+        playbackControlCommands = ["Pause", "Resume", "Previous", "Skip", "Queue"]
+        # all the commands that are related to playback
+
+        if command in playbackControlCommands and playbackControlsDisabled:
+            # if the command is in the list of playback control commands *and* the playbackControlsDisabled flag is true
+            print(f'Playback controls (temporarily) stopped with "playbackControls pause/stop"', flush=True)
+            # prints console message about disabled playback control
+            pass
+            # doesn't progress
+
+        print(f"Sending command {command} via PTP", flush=True)
         # user inform
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as webClient:
         # starts a new connection (with the same parameters)
-            webClient.connect(("127.0.0.1", 6666))
+            webClient.connect(("127.0.0.1", webClientPort))
             # connects to the existing host
-            webClient.sendall(msg.encode())
+            webClient.sendall(msg.encode("utf-8"))
             # sends the message
 
-            if command == "Playlist" or command == "Queue":
-                # if the command is specifically "Playlist" or "Queue", that means the reply requires data to be sent back from SBO
-                response = webClient.recv(1024).decode()
+            returnableCommands = ["Playlist", "Queue", "Custom Color"]
+            # all the commands that require a return 
+
+            if command in returnableCommands:
+            # if the command is one of the return-expecting ones, that means the reply requires data to be sent back from SBO
+                response = webClient.recv(1024).decode("utf-8")
                 # gets the response from SBO
-                print(response, type(response)) # debug
                 return response
                 # returns to calling function (command)
             else:
-                # if the command is anything else
+            # if the command is anything else
                 None
                 # doesn't do anything, because that's expected
+
+            webClient.close()
+            # stops the connection when it's done
 
     except Exception as err:
         # if it fails for some reason
@@ -427,7 +450,7 @@ class Bot(commands.AutoBot):
                     # changes boolean to True to prevent constant logging
                 elif not logged and not playbackControls:
                     # if the live status hasn't already been logged once, but all "playback controls" are off
-                    print(f"{ttvName} is live! All playback controls are disabled via config")
+                    print(f"{ttvName} is live! All playback controls are disabled via config", flush=True)
                     logged = True
                     # changes boolean to True to prevent constant logging
             else:
@@ -767,8 +790,6 @@ class CommandComponent(commands.Component):
                 # calls the dataPasser function
                 await context.reply("Skipped")
             
-            else:
-                print(f"No permission", flush=True)
 
 ### Pause ###
 
@@ -923,7 +944,7 @@ class CommandComponent(commands.Component):
 
                 except:
                     # if the command fails
-                    await context.reply(f"Add a valid hex code after !songColor, please")
+                    await context.reply(f"Add a valid color/hex code after !songColor, please")
                     # replies to user 
 
 ### Text Color ###
@@ -960,7 +981,7 @@ class CommandComponent(commands.Component):
 
                 except:
                     # if the command fails
-                    await context.reply(f"Add a valid hex code after !textColor, please")
+                    await context.reply(f"Add a valid color/hex code after !textColor, please")
                     # replies to user 
 
 ### Bar Color ###
@@ -997,7 +1018,7 @@ class CommandComponent(commands.Component):
 
                 except:
                     # if the command fails
-                    await context.reply(f"Add a valid hex code after !barColor, please")
+                    await context.reply(f"Add a valid color/hex code after !barColor, please")
                     # replies to user 
 
 ### Overlay Color ###
@@ -1029,13 +1050,92 @@ class CommandComponent(commands.Component):
                     # calls the dataPasser function with the color
 
                     if color.lower() == "clear":
-                        await context.reply(f"Clearing overlay text color")
+                        await context.reply(f"Clearing overlay color")
                     else:
-                        await context.reply(f"Changing overlay text color")
+                        await context.reply(f"Changing overlay color")
 
                 except:
                     # if the command fails
-                    await context.reply(f"Add a valid hex code after !overlayColor, please")
+                    await context.reply(f"Add a valid color/hex code after !overlayColor, please")
+                    # replies to user 
+
+### Custom Color ###
+
+    @commands.command(aliases=["customC"])
+    async def customColor(self, context: commands.Context) -> None:
+        """customColor"""
+
+        if self.bot.channelLive and commandOptions["Custom Color"]["enable"]:
+        # checks if the channel is live and the command is enabled
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Custom Color"]["cooldown_Chatter"], commandOptions["Custom Color"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter(context, "Custom Color"):
+                fullMsg = context.content
+                # gets the full message from the contents
+                try:
+                    cmd, args = fullMsg.split(" ", 1)
+                    # splits the command, stores the arguments as "args"
+
+                    reply = dataPasser("Custom Color", args)
+                    # calls the dataPasser function with the arguments, waits for return
+
+                    await context.reply(f"{reply}")
+                    # replies to user with string from SBO
+                except:
+                    # if the command fails
+                    await context.reply(f"Command parse error, please check parameters and try again")
+                    # replies to user 
+
+### Playback Control ###
+
+    @commands.command()
+    async def playbackControl(self, context: commands.Context) -> None:
+        """playbackControl"""
+        global playbackControlsDisabled
+        # stores the boolean here as a variable
+
+        if self.bot.channelLive and commandOptions["Playback Control"]["enable"]:
+        # checks if the channel is live and the command is enabled
+        
+            if not await self.cooldowns.cooldownCheck(context, commandOptions["Playback Control"]["cooldown_Chatter"], commandOptions["Playback Control"]["cooldown_Channel"]):
+                # runs the cooldown check with the command options and message context
+                if cooldownMessage:
+                    # if the cooldown message config is enabled
+                    await context.reply(f"Command is on cooldown")
+                    # replies with cooldown message
+                    return 
+                    # stops the command from progressing 
+
+            if isCoolChatter(context, "Playback Control"):
+                fullMsg = context.content
+                # gets the full message from the contents
+                try:
+                    cmd, order = fullMsg.split(" ", 1)
+                    # splits the command, stores the type of order given as "order"
+
+                    order = order.lower().strip()
+                    # lowercases and strips the command just in case
+
+                    if order == "pause" or order == "stop":
+                        # if the "order" is pause or stop
+                        playbackControlsDisabled = True
+                        # sets the playback control flag to true, preventing playback controls from running
+                    elif order == "resume" or order == "continue":
+                        # if the "order" is resume or continue
+                        playbackControlsDisabled = False
+                        # sets the playback control flag to false, allowing playback controls to run
+
+                except:
+                    # if the command fails
+                    await context.reply(f"Please ensure correct parameter use")
                     # replies to user 
 
 ### SBO ###
@@ -1131,8 +1231,8 @@ if missingID:
         raise SystemExit
 
 if not ttvName or not botName:
-    # checks if the channel/bot name exist (required for conduit/connection)
-        print(f"Twitch username or bot username not found, please enter into the config file", flush=True)
+    # checks if the channel/bot name exist (required for twitch API connection)
+        print(f"Twitch/Bot username not found, please enter into the config file", flush=True)
         # user inform
         input("Press enter to exit", flush=True)
         raise SystemExit

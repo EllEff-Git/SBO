@@ -1,0 +1,11 @@
+@keyframes gradientBorder {
+    0.0% {
+        border-image: linear-gradient(45deg, #FF0000, #0000FF, #008000) 1;
+    }
+    50.0% {
+        border-image: linear-gradient(45deg, #FF0000, #0000FF, #008000) 1;
+    }
+    100.0% {
+        border-image: linear-gradient(45deg, #0000FF, #008000, #FF0000) 1;
+    }
+}

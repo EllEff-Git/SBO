@@ -1,6 +1,6 @@
 import asyncio, os, sys, json, time, configparser
 # Required for file directory grabs, reads, asynchronous functions, etc
-import uvicorn
+import uvicorn, socket, threading, random
 # Required for websocketing and site management
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 # Required for web server hosting
@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 # Required for getting status from server
 
 
-SBO_WSver = "v0.3.12.1913"
+SBO_WSver = "v0.3.15.0609"
 """The program version (y.m.dd.hhmm)"""
 
 
@@ -30,6 +30,8 @@ site = os.path.abspath(os.path.join(directory, "..", "Web", "index.html"))
 """Stores the full path of the index.html file"""
 jsonCfg = os.path.join(directory, "config.json")
 """Stores the full path of the config.json file"""
+keyframesTxt = os.path.join(directory, "keyframes.txt")
+"""Stores the full path of the keyframes.txt file"""
 
 ### Variables ###
 
@@ -49,27 +51,35 @@ Config.read(ConfigPath, "utf8")
 
 ### Function ###
 
-httpPort = Config.getint("Function", "http_Port")
-"""The websocket port (4-digit int)"""
+httpPort = Config.getint("Function", "http_Port", fallback=6868)
+"""The websocket port (0-65333, int)"""
+playerTimeout = Config.getint("Function", "hide_Player_Timeout", fallback=15)
+"""The time the player needs to be paused for before it hides itself, seconds (int)"""
+webHostPort = (Config.getint("Function", "http_Port", fallback=6666) + 2)
+"""The port to use for the SBO PTP connection (http_Port + 2, int)"""
+runBot = Config.getboolean("Twitch-Bot", "sbo_Runs_Bot")
+"""Whether to automatically start the bot program (boolean)"""
+enableBot = Config.getboolean("Twitch-Bot", "enable_Twitch_Bot")
+"""Whether to enable the Twitch Bot PTP connection  (boolean)"""
 
 ### Visuals ###
 
-playerWidth = Config.getint("Visuals", "player_Width")
+playerWidth = Config.getint("Visuals", "player_Width", fallback=420)
 """The width of the player in HTML (int, pixels)"""
-playerHeight = Config.getint("Visuals", "player_Height")
+playerHeight = Config.getint("Visuals", "player_Height", fallback=90)
 """The height of the player in HTML (int, pixels)"""
-playerOpacity = Config.getfloat("Visuals", "player_Opacity")
+playerOpacity = Config.getfloat("Visuals", "player_Opacity", fallback=0.75)
 """The opacity of the player in HTML (float)"""
-artistPrefix = Config.get("Visuals", "artist_Prefix")
+artistPrefix = Config.get("Visuals", "artist_Prefix", fallback="by")
 """A prefix string for the artist field (string)"""
 albumPrefix = Config.get("Visuals", "album_Prefix")
 """A prefix string for the album field (string)"""
 
 ### Title ###
 
-titleStyle = Config.get("Title", "title_Style").lower()
+titleStyle = Config.get("Title", "title_Style", fallback="italic").lower()
 """The title styling in HTML (string)"""
-titleWeight = Config.get("Title", "title_Weight")
+titleWeight = Config.get("Title", "title_Weight", fallback="bold")
 """The title font weight in HTML (string)"""
 try:
     # tries to change the titleWeight to an integer (if it's stores as such)
@@ -78,14 +88,14 @@ except:
     # if it can't save as integer, turns into lowercase
     titleWeight = titleWeight.lower()
 
-defaultTitleColor = "#" + Config.get("Title", "title_Color", fallback="#ffffff")
+defaultTitleColor = "#" + Config.get("Title", "title_Color", fallback="ffffff")
 """The default color for title (may be overwritten via SBO due to Bot (string, hex))"""
 
 ### Support ###
 
-supportStyles = Config.get("Support", "support_Styles").lower()
+supportStyles = Config.get("Support", "support_Styles", fallback="italic").lower()
 """The supporting string styling in HTML (string)"""
-supportWeights = Config.get("Support", "support_Weights")
+supportWeights = Config.get("Support", "support_Weights", fallback="normal")
 """The supporting string weight in HTML (string)"""
 try:
     # tries to change the supportWeights to an integer (if it's stores as such)
@@ -94,14 +104,12 @@ except:
     # if it can't save as integer, turns into lowercase
     supportWeights = supportWeights.lower()
 
-defaultSupportColors = "#" + Config.get("Support", "support_Colors", fallback="#ffffff")
+defaultSupportColors = "#" + Config.get("Support", "support_Colors", fallback="ffffff")
 """The default color for support texts (may be overwritten via SBO due to Bot (string, hex))"""
 
 ### Border ###
 
-borderStyle = Config.get("Border", "border_Style").lower()
-"""The border styling in HTML (string)"""
-defaultBorderColor = "#" + Config.get("Border", "border_Color", fallback="#ffffff")
+defaultBorderColor = "#" + Config.get("Border", "border_Color", fallback="ffffff")
 """The default color for border (may be overwritten via SBO due to Bot (string, hex))"""
 
 ### Progress Bar ###
@@ -126,6 +134,7 @@ allTypes = {
     "progress": ["progress"]
 }
 # a map of what types of fields are added to the payload based on the key given via payloadBuilder
+# overlay only updates the border color(s)
 # color only updates the colors (no need to mess with the whole program)
 # progress only updates the timestamps (basically just ensuring everything's working smooth)
 # track updates all the song-related info (also includes timestamps to match them)
@@ -133,12 +142,33 @@ allTypes = {
 # progress means the progress change was too large (user skipped a part of song), just sets the progress to match
 
 
+newKeyframes = True
+"""A boolean to tell the program to re-upload the keyframes file"""
+newColors = []
+"""A list that stores the colors sent by SBO when generating new keyframes, gets passed via WS"""
+
+
 print(f"HTML overlay program {SBO_WSver} starting", flush=True)
 # quick user update
 
 
+if "," in defaultBorderColor:
+    # if there's any commas in the default border color
+    defaultBorderColor = defaultBorderColor.replace('"', "")
+    # removes quotes it will have from being a string
+    borderColors = defaultBorderColor.split(",")
+    # splits the colors into a list by commas
+    for color in range(len(borderColors)):
+        # goes through the list of colors
+        borderColors[color] = "#" + borderColors[color].strip()
+        # adds a # to the start of the hex code and strips empty space
+    defaultBorderColor = ", ".join(borderColors)
+    # joins the string back together with commas (now with # in front of each code)
+
+
 HTMLconfig = {
     "httpPort": httpPort,
+    "playerTimeout": playerTimeout,
     "playerWidth": playerWidth,
     "playerHeight": playerHeight,
     "playerOpacity": playerOpacity,
@@ -148,7 +178,6 @@ HTMLconfig = {
     "supportStyles": supportStyles,
     "supportWeights": supportWeights,
     "supportColors": defaultSupportColors,
-    "borderStyle": borderStyle,
     "borderColor": defaultBorderColor,
     "progressBarColor": defaultBarColor,
     "progressBarPaused": progressBarPaused
@@ -164,6 +193,25 @@ with open(jsonCfg, "w") as htmlcfg:
 
 print(f"HTML config updated", flush=True)
 # config read user update
+
+
+if runBot:
+    # if SBO should run the bot
+    enableBot = True
+    # also enables the bot connection
+
+if enableBot:
+    # if the bot is enabled
+    webHost = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # creates the base webHost socket (defines)
+    webHost.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # restarts sockets
+    webHost.bind(("127.0.0.1", webHostPort))
+    # sets the address and port (2 higher than the WS -> overlay)
+    webHost.listen()
+    # creates a websocket listener connection on localhost
+    print(f"Started inter-python connection for SBO -> WS", flush=True)
+    # debug print
 
 
 def readSBO() -> dict:
@@ -250,10 +298,98 @@ def payloadBuilder(map: dict, type: str, fields: list) -> str:
     # returns the full built payload in json format
 
 
+def webHostListener():
+    """Websocket message host/listener"""
+    global newKeyframes, newColors
+    # takes the global variable here, so it can be reassigned
+    print(f"Waiting for SBO to connect", flush=True)
+    # prints the message on program start
+
+    while True:
+        # while the program is running
+        try:
+            client_socket, client_address = webHost.accept()
+            # waits for a client connection, in a while loop so it can reconnect if it ever disconnects
+
+            while True:
+                # while this loop is active
+                try:
+                    rawMessage = client_socket.recv(1024)
+                    # grabs any messages sent (1024 bytes max, shouldn't use more than a few)
+                    if not rawMessage:
+                        # if the message is empty (disconnect)
+                        break
+                        # breaks to reset the connection
+
+                    message = rawMessage.decode("utf-8").strip()
+                    # decodes it (bytes -> string) and strips empty space
+                    print(f"Command received:", message)
+                    # prints a Python to Python (Peer to Peer) inform
+                    colors = message.split(",")
+                    # gets the colors from the message by splitting via commas
+                    colors = [color.strip() for color in colors]
+                    # strips each color for extra space
+                    newColors = colors
+                    # sets the global variable to match
+
+                    keyframes = f"@keyframes gradientBorder {{\n"
+                    # starts by defining it as a keyframe of gradientBorder
+
+                    colorCount = len(colors)
+                    # gets the number of colors passed
+                    
+                    for i in range(colorCount):
+                        # repeats for the amount of colors given
+                        percentage = (i / (colorCount - 1)) * 100
+                        # calculates a progress percentage based on colors given
+                        keyframes += f"    {percentage}% {{\n"
+                        # adds the animation progress
+                        keyframes += f"        border-image: linear-gradient(45deg, "
+                        # adds the animation style
+                        random.shuffle(colors)
+                        # mixes the order of the colors to create dynamic coloring (otherwise it'll just not move, since all percentages match)
+                        colorString = ", ".join(colors)
+                        # creates a string for the next line to use
+                        keyframes += f"{colorString}) 1;\n"
+                        # adds the randomly shuffled colors in
+                        keyframes += "    }\n"
+                        # adds a newline in between
+
+                    keyframes += "}\n"
+                    # adds the final bracket and newline to the keyframes to close it
+
+                    with open(keyframesTxt, "w") as kf:
+                        # opens the keyframe file in write mode
+                        kf.write(keyframes)
+                        # saves the keyframes into the keyframes.txt file
+
+                    print(f"Keyframe file updated with new colors", flush=True)
+                    # user inform
+
+                    newKeyframes = True
+                    # sets the flag for new keyframes to True so the program can catch the changes
+
+                except socket.error as soc:
+                    print(f"Socket error with command: {soc}")
+                    break
+                except ConnectionAbortedError:
+                    print(f"Connection aborted by Windows (10053)")
+                    break
+        except socket.error as socF:
+            print(f"Error forming connection: {socF}")
+
+
 @program.get("/")
 # gets the HTML page
 def index():
     return FileResponse(site)
+
+
+@program.get("/keyframes.txt")
+# gets the keyframe file
+async def keyframePush():
+    return FileResponse(keyframesTxt, media_type="text/plain")
+    # sends the keyframes.txt to websocket
 
 
 @program.get("/config.json")
@@ -267,7 +403,7 @@ def configPush():
 @program.websocket("/ws")
 # handles the websocket
 async def websocket(ws: WebSocket):
-    global allTypes
+    global allTypes, newKeyframes, newColors
 
     await ws.accept()
     # gets the connection
@@ -331,6 +467,25 @@ async def websocket(ws: WebSocket):
 
         while True:
         # this runs constantly after, with a short cooldown, thanks to the "await asyncio.sleep(2)" at the end of the loop
+
+            if newKeyframes:
+                # if there are new keyframes to use
+                await keyframePush()
+                # calls the keyframe pusher to upload the text file to socket
+                await asyncio.sleep(1)
+                # sleeps for a second to ensure the keyframes are up
+                colorMap = {
+                    "colors": newColors
+                }
+                # creates a map with the newColors from global, stored by webhost 
+                await ws.send_text(payloadBuilder(colorMap, "keyframes", ["colors"]))
+                # tells the websocket there's new keyframes, passes the colors along with the command
+                newKeyframes = False
+                # sets the keyframe boolean to false so it doesn't trigger again until new keyframes exist
+                await asyncio.sleep(1)
+                # sleeps for a second
+                continue
+                # goes back to loop start
 
             sbo = readSBO()
             # calls readSBO and then stores the dictionary here as sbo
@@ -462,7 +617,7 @@ async def websocket(ws: WebSocket):
                     # if there's a progress mismatch, but no song or pause change and no color update
                     await ws.send_text(payloadBuilder(payload, "progress", allTypes["progress"]))
                     # sends the progress payload
-        
+
             await asyncio.sleep(2)
             # sleeps for 2 seconds between
 
@@ -480,9 +635,17 @@ async def websocket(ws: WebSocket):
         clients.discard(ws)
 
 
+if enableBot:
+    # if the config option to enable the bot is on (enabled by bot runner if not already)
+    webHostThread = threading.Thread(target=webHostListener)
+    # creates a thread for the webhostlistener to sit in
+    webHostThread.start()
+    # starts the thread
+
+
 if __name__ == "__main__":
     # runs the socket starter
-    print(f"Overlay online at localhost:{httpPort}!", flush=True)
+    print(f"Overlay coming online at localhost:{httpPort}!", flush=True)
     # prints first, otherwise won't print
     uvicorn.run(program, host="127.0.0.1", port=httpPort, log_level="warning", access_log=False)
     # starts the web server as the FastAPI program, using a preset IP of (local) with the configurable httpPort - disables non-error prints and http requests

@@ -1,8 +1,8 @@
-import subprocess, configparser, socket
+import subprocess, configparser, socket, requests
 # Required to run the websocket program, the python intercommunication system and to read config
 import os, sys, time, threading, datetime, queue, concurrent.futures
 # Required for system information, background tasking and queueing
-import spotipy, requests, json
+import spotipy, requests, json, re, random
 # Required for basic function of Spotify data requests and storing
 from spotipy.oauth2 import SpotifyOAuth
 # Required for authorizing with Spotify
@@ -15,7 +15,7 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.13.0041"
+SBO_ver = "v0.3.15.0552"
 """The SBO program version (y.m.dd.hhmm)"""
 
 
@@ -49,6 +49,13 @@ sboBotDir = os.path.join(directory, "Bot")
 """The bot's folder (SBO/Bot) """
 sboBotPath = os.path.join(sboBotDir, sboBotExe)
 """The full path to the SBO-Bot.exe (SBO/Bot/SBO-Bot.exe)"""
+
+### Colors ###
+
+colorStringFile = "colorStrings.json"
+"""The name of the color string map file"""
+colorStringPath = os.path.join(directory, colorStringFile)
+"""The full path to the colorStrings.json file (SBO/colorStrings.json)"""
 
 ### Time Function (Console) ###
 
@@ -84,6 +91,12 @@ enableBot = Config.getboolean("Twitch-Bot", "enable_Twitch_Bot")
 """Whether to enable the Twitch Bot PTP connection  (boolean)"""
 runBot = Config.getboolean("Twitch-Bot", "sbo_Runs_Bot")
 """Whether to automatically start the bot program (boolean)"""
+autoRestart = Config.getboolean("Function", "auto_Restart", fallback=False)
+"""Whether to restart the application on unexpected quit"""
+webHostPort = (Config.getint("Function", "http_Port", fallback=6666) + 1)
+"""The port to use for the Bot PTP connection (http_Port + 1, int)"""
+webClientPort = (Config.getint("Function", "http_Port", fallback=6666) + 2)
+"""The port to use for the WS PTP connection (http_Port + 2, int)"""
 
 if runBot:
     # if SBO should run the bot
@@ -92,11 +105,11 @@ if runBot:
 
 if enableBot:
     # if the bot is enabled
-    webHost =  socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    webHost = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     # creates the base webHost socket (defines)
     webHost.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     # restarts sockets
-    webHost.bind(("127.0.0.1", 6666))
+    webHost.bind(("127.0.0.1", webHostPort))
     # sets the address and port
     webHost.listen()
     # creates a websocket listener connection on localhost
@@ -117,7 +130,8 @@ if len(sp_client_secret) > 5:
     None
 else:
     print(f"{Time()}[ERROR]: Required info not found in config.ini, please enter the identifiers and try again")
-    time.sleep(30)
+    x = input("Press any button to exit")
+    # prompts user, exits
     raise SystemExit
 
 ### Auth ###
@@ -126,7 +140,7 @@ sessionID = requests.Session()
 """Tells the auth to keep one stable connection, rather than re-connecting every request"""
 
 authorisation = SpotifyOAuth(
-    scope = ["user-read-playback-state", "user-modify-playback-state"], 
+    scope = ["user-read-playback-state", "user-modify-playback-state", "playlist-read-private"], 
     client_id = sp_client_ID, 
     client_secret = sp_client_secret, 
     redirect_uri = sp_redirect,
@@ -159,6 +173,9 @@ callSong = False
 
 lastSong = lastArtist = lastPlaylistURL = None
 """Previous track's identifiers"""
+
+customColors = None
+"""Variable storing the custom colors from colorStrings.json"""
 
 
 
@@ -256,19 +273,24 @@ class SpotifyQueue:
                     success = main.current_playback()
                     # gets the current playback
                 elif call == "playlist":
-                    # if the request is for a playlist's details
-                    playlist = main.playlist(URI)
-                    # gets the playlist info via URI (takes ID, not link)
                     try:
-                        # tries to *also* get the number of tracks
-                        tracks = main.playlist_items(URI, fields="total")
-                        # saves the number of tracks in "tracks"
-                        success = playlist, tracks
-                        # turns the return into a tuple of the playlist and track information
+                        # if the request is for a playlist's details
+                        playlist = main.playlist(URI)
+                        # gets the playlist info via URI (takes ID, not link)
+                        try:
+                            # tries to *also* get the number of tracks
+                            tracks = main.playlist_items(URI, fields="total")
+                            # saves the number of tracks in "tracks"
+                            success = playlist, tracks
+                            # turns the return into a tuple of the playlist and track information
+                        except:
+                            # if it can't (error for some reason or another)
+                            success = playlist, {"total": 0}
+                            # turns success into a tuple, so that the calling function knows there's no track information
                     except:
-                        # if it can't (error for some reason or another)
-                        success = playlist, 0
-                        # turns success into a tuple, so that the calling function knows there's no track information
+                        # if the playlist check fails (typically 403 forbidden)
+                        success = "Not a playlist", 0
+                        # saves a preset string to trip off playlistInfo's fail detection
 
                 ### API Push / No Return ###
                 elif call == "queue":
@@ -415,16 +437,32 @@ class SpotifyQueue:
 
                 if attempt == 2 and not internalError:
                     # if it's the last attempt (range(3) = 0,1,2) and it fails
-                    print(f"{Time()}[CRITICAL]: All attempts to reconnect to Spotify API failed due to {error}\n\nPlease manually restart SBO. Exiting...")
-                    time.sleep(600)
-                    raise SystemExit
-                    # prompts user, then exits
+                    print(f"{Time()}[CRITICAL]: All attempts to reconnect to Spotify API failed due to {error}\n\nPlease restart SBO. Exiting...")
+                    time.sleep(300)
+                    # waits 5 minutes
+                    if autoRestart:
+                        # if auto-restart is enabled
+                        restarter()
+                        # runs the restarter
+                    else:
+                        time.sleep(300)
+                        # waits an additional 5 minutes
+                        raise SystemExit
+                        # then exits
                 elif attempt == 2 and internalError:
                     # if it's the last attempt and fails due to internal error
-                    print(f"{Time()}[CRITICAL]: All attempts to reconnect to Spotify API failed due to Spotify's internal error.\n\nPlease manually restart SBO. Exiting...")
-                    time.sleep(600)
-                    raise SystemExit
-                    # prompts user, then exits
+                    print(f"{Time()}[CRITICAL]: All attempts to reconnect to Spotify API failed due to Spotify's internal error.\n\nPlease restart SBO. Exiting...")
+                    time.sleep(300)
+                    # waits 5 minutes
+                    if autoRestart:
+                        # if auto-restart is enabled
+                        restarter()
+                        # runs the restarter
+                    else:
+                        time.sleep(300)
+                        # waits an additional 5 minutes
+                        raise SystemExit
+                        # then exits
 
             time.sleep(3)
             # waits 3 seconds to give it some time between tries
@@ -447,29 +485,44 @@ def webHostListener():
     # prints the message on program start
 
     while True:
-        client_socket, client_address = webHost.accept()
-        # waits for a client connection, in a while loop so it can reconnect if it ever disconnects
-        print(f"{Time()}[PTP]: SBO-Bot connected")
-        # prints a Python to Python (Peer to Peer) inform when Bot connects successfully
+        # while the program is running
+        try:
+            client_socket, client_address = webHost.accept()
+            # waits for a client connection, in a while loop so it can reconnect if it ever disconnects
 
-        while True:
-            # while the program is running
-            rawMessage = client_socket.recv(1024)
-            # grabs any messages sent (1024 bytes max, shouldn't use more than a few)
+            while True:
+                # while this loop is active
+                try:
+                    rawMessage = client_socket.recv(1024)
+                    # grabs any messages sent (1024 bytes max, shouldn't use more than a few)
+                    if not rawMessage:
+                        # if the message is empty (disconnect)
+                        break
+                        # breaks to reset the connection
 
-            if not rawMessage:
-                # if the message is empty (disconnect)
-                break
-                # breaks to reset the connection
+                    message = rawMessage.decode("utf-8").strip()
+                    # decodes it (bytes -> string) and strips empty space
+                    print(f"{Time()}[PTP]: Command received:", message)
+                    # prints a Python to Python (Peer to Peer) inform
+                    botCommand(message, client_socket)
+                    # calls botCommand with the decoded/stripped message, as well as the client socket (to pass back messages)
 
-            message = rawMessage.decode().strip()
-            # decodes it (bytes -> string) and strips empty space
+                except socket.error as soc:
+                    print(f"{Time()}[PTP]: Socket error with command: {soc}")
+                    break
+                except ConnectionAbortedError:
+                    print(f"{Time()}[PTP]: Connection aborted by Windows (10053)")
+                    break
 
-            print(f"{Time()}[PTP]: Command received:", message)
-            # prints a Python to Python (Peer to Peer) inform
+        except socket.error as socF:
+            print(f"{Time()}[PTP]: Error forming connection: {socF}")
 
-            botCommand(message, client_socket)
-            # calls botCommand with the decoded/stripped message, as well as the client socket (to pass back messages)
+
+def stringCleaner(string: str):
+    """Function that cleans strings (removes invisible characters that will break .split without any reason)"""
+    return re.sub(r"[\u0340-\u034f\u200b\u200c\u200d]+", "", string)
+    # takes a string parameter, uses regular expression to replace invisible bs characters with nothing
+
 
 
 ### Bot Commands ###
@@ -494,7 +547,7 @@ def botCommand(command: str, client_socket):
         return
         # stops checks
 
-    if command.startswith("Playlist"):
+    elif command.startswith("Playlist"):
         # if the command starts with "playlist"
         playlistID = csPlaylistID
         # saves the current song's playlist's ID as playlistID
@@ -503,7 +556,7 @@ def botCommand(command: str, client_socket):
         return
         # stops checks
 
-    if command.startswith("Queue:"):
+    elif command.startswith("Queue:"):
         # if the command starts with "queue"
         x, uri = command.split(" ", 1)
         # splits the command into scrap (command) and the URI to pass
@@ -512,14 +565,47 @@ def botCommand(command: str, client_socket):
         return
         # stops checks
 
-    if command.startswith(("Song Color:", "Text Color:", "Bar Color:", "Overlay Color:")):
+    elif command.startswith(("Song Color:", "Text Color:", "Bar Color:", "Overlay Color:")):
         func, color = command.split(": ", 1)
         # splits the command into the function and the color to pass
-        colorChanger(func, color)
-        # calls the colorChanger with the parsed function and color as parameters
+        if func == "Overlay Color" and " " in color:
+        # if the command/function is overlay color and there's a space in color (means multiple colors)
+            overlayColor(color)
+            # directly calls overlayColor, skipping the colorChanger part
+        else:
+            colorChanger(func, color)       
+            # calls the colorChanger with the parsed function and color as parameters
         return
         # stops cheks
     
+    elif command.startswith("Custom Color:"):
+        func, arg = command.split(": ", 1)
+        # splits the command into the function and the argument(s) to pass
+        args = stringCleaner(arg)
+        # cleans string because this has a lot of difficulty for some reason
+        try:
+            method, color = args.split(" ", 1)
+            # splits the arguments by the first space
+            if " " in color:
+                # if color string has a space
+                color, hexCode = color.split(" ", 1)
+                # takes the hex code as the last parameter
+            else:
+                # if color doesn't have a space (remove/get)
+                hexCode = None
+                # sets hexCode to None
+            colorManager(method, client_socket, color, hexCode)
+            # calls colorWriter with the given arguments
+            return
+            # stops checks
+        except Exception as err:
+            # if the split fails
+            errorMsg = f"Error parsing {command}, please check parameters and try again"
+            # creates a string to send back to bot
+            client_socket.sendall(errorMsg.encode("utf-8"))
+            # sends the message to bot -> chat (bot is expecting a return, won't work until one is given)
+            return
+            
     print(f"{Time()}[PTP]: Unknown command:", command)
     # if the command is somehow not recognized (shouldn't ever happen, but this way won't break)
 
@@ -550,7 +636,8 @@ def queueTrack(link: str, client_socket):
     # calls the queue manager to add a link to the play queue
     trackName = futureQT.result()
     # gets the result via future object
-    client_socket.sendall(trackName.encode())
+    client_socket.sendall(trackName.encode("utf-8"))
+    # sends the track name to Bot to reply with
 
 def playlistInfo(link: str, client_socket):
     """Requests playlist information via Spotify link"""
@@ -567,7 +654,11 @@ def playlistInfo(link: str, client_socket):
         else:
             playlistTracks = "a number of"
             # creates a generic string instead
-        if playlistData:
+        if playlistData == "Not a playlist":
+            # if the return is a preset string
+            playlistNameStr = f"A private playlist"
+            # sets a private playlist string
+        elif playlistData:
             # if there's a return that contains data
             isPublic = playlistData.get("public", False) == True
             # checks if the playlist is public, defaults to False (if the return is True, returns True, else False)
@@ -604,8 +695,142 @@ def playlistInfo(link: str, client_socket):
     else:
         playlistNameStr = f"Not currently listening to a playlist"
         # if the playlist link is set to a "not a playlist" string, it means the track is being listened to off-playlist
-    client_socket.sendall(playlistNameStr.encode())
+    client_socket.sendall(playlistNameStr.encode("utf-8"))
     # sends the response back to SBO-Bot to reply with in chat
+
+
+
+### Color Mapping ###
+
+
+def hexCheck(hexCode: str):
+    """Function that uses regular expression to check if a given hexCode code is valid"""
+    if hexCode.startswith("#"):
+        # if the hex code has a "#" applied
+        hexCode = hexCode[1:]
+        # reassigns the hexCode variable without the "#"
+    return bool(re.match(r"^[A-Fa-f0-9]{6}$", hexCode))
+    # checks if the given hexCode code fits regular expression (re) conditions for hex codes
+    # ^ = start of string, {6} = all 6 characters fit, $ ends the check (if >6 characters present, automatic fail) 
+    # (A-F = fits any uppercase character in hex range)
+    # (a-f = fits any lowercase character in hex range)
+    # (0-9 = fits any number in hex range)
+    # if all conditions are met, it cannot be a faulty hex code  
+
+
+def colorLoader() -> dict:
+    """Function to load the mapped custom colorStrings.json file"""
+    with open(colorStringPath, "r") as colors:
+        # opens the colorStrings.json file in read mode
+        try: 
+            # attempts to load the colors
+            return json.load(colors)
+            # returns the color map to the calling function
+        except:
+            # if it fails
+            print(f"{Time()}[COLOR]: Failed to load the colorStrings.json file, please check the file has colors and try again")
+            return {"white": "fffff"} 
+            # returns a single color
+
+
+def colorManager(command:str, client_socket, color:str, hexCode:str = None):
+    """Function to manipulate custom colors stored in colorStrings.json"""
+
+    colorMap = colorLoader()
+    # runs the colorLoader to get the most recent color map
+
+    command = command.lower()
+    # saves the command as the lowercase version
+
+    color = color.lower()
+    # ensures the function only deals with lowercase colors
+
+    try:
+    # wraps everything in a try loop, so it doesn't delete the colors if it fails mid-way through
+        if hexCode and hexCode.startswith("#"):
+            # if the hex code isn't empty and has a "#" applied
+            hexCode = hexCode[1:]
+            # reassigns the hexCode variable without the "#"
+
+        if command == "get":
+        # if the command is to get the color
+            if color in colorMap:
+            # if the color exists in the map
+                gotColor = colorMap.get(color)
+                # stores the color in question
+                colorStr = f"{color} is {gotColor}"
+                # creates a string from the color and
+            elif color == "all":
+                # if the "color" is a request for "all"
+                colorList = colorMap.keys()
+                # stores all the color names in a list
+                colorStr = ", ".join(colorList)
+                # turns the color list into a string separated by commas
+                if len(colorStr) > 450:
+                    # if the string is very long (Twitch has a limit of 500 characters, this ensures it won't surpass and fail)
+                    colorStr = f"Response is too long for Twitch, sorry!"
+                    # too long error message
+                else:
+                    colorStr = f"Stored colors: {colorStr}"
+                    # forms a cohesive string
+            else:
+                # if the color isn't in the map
+                colorStr = f"Could not find the color specified"
+                # sets default string
+
+        elif command == "set":
+        # if the command is to set a color
+            if hexCode and hexCheck(hexCode):
+            # checks if a hex code was given and it's a valid hex code
+                colorMap[color] = hexCode
+                # sets the given color to that string
+                colorStr = f'Setting "{color}" to "{hexCode}"'
+                # success string
+            else:
+                colorStr = f'No hex or invalid hex given: "{hexCode}"'
+                # sets fail string
+
+        elif command == "remove":
+        # if the command is to remove a color
+            if color in colorMap:
+            # checks if the color is in the map
+                colorMap.pop(color)
+                # removes the color
+                colorStr = f'Removing "{color}" from color map'
+                # success string
+            else:
+                colorStr = f'"{color}" not found in color map'
+                # sets an unfound string
+
+        else:
+        # if the command doesn't exist
+            colorStr = f"{command} is not a valid command"
+            # sets the string to error
+            
+        client_socket.sendall(colorStr.encode("utf-8"))
+        # sends the color string back to bot
+
+    except:
+    # if it fails (happens occasionally with incorrect parameters, connection errors, etc)
+        failStr = f"Failed to manipulate custom color, sorry!"
+        # generic fail message
+        client_socket.sendall(failStr.encode("utf-8"))
+        # bot expects a response, sends generic one
+        return
+        # doesn't progress to writing the color file (if it did, it'd likely delete everything)
+
+    try:
+    # if the color get/set/remove works, tries to save the new file
+        with open(colorStringPath, "w") as newColors:
+            # opens the colorStrings.json file in write mode
+            json.dump(colorMap, newColors, indent=4)
+            # dumps the new color map into the json file
+            print(f"{Time()}[COLOR]: Color map saved successfully!")
+            # user inform on success
+    except Exception as cErr:
+    # if the file save fails
+        print(f"{Time()}[COLOR]: Color map saving failed due to {cErr}")
+        # prints debug message
 
 
 ### Color Changing ###
@@ -624,10 +849,20 @@ def colorChanger(func: str, color: str):
     }
     # stores all the color-related functions in a map
 
-    if color != "clear" and not color.startswith("#"):
-        # checks if the color already has a # and that it isn't "clear"
-        color = "#" + color
-        # if not, adds the # (needed to pass hex values to HTML)
+    if not hexCheck(color):
+        # if the color isn't a valid hex
+        if color in customColors:
+            # if the color is a string that matches one in the custom colors
+            color = customColors[color]
+            # changes the color to match that hex code
+        elif color.lower() in customColors:
+            # if the lowercase version of that color's string matches a custom color
+            color = customColors[color.lower()]
+            # changes the color to match that hex code
+        if color != "clear" and not color.startswith("#"):
+            # checks if the color already has a # and that it isn't "clear"
+            color = "#" + color
+            # if not, adds the # (needed to pass hex values to HTML)
 
     colorFunctions[func](color)
     # calls a function based on the parameters
@@ -638,61 +873,133 @@ def songColor(color: str):
     """Changes the color of the song text"""
     global songColorHex
     if color == "clear":
-        # if the command is to clear, not to set a color
+    # if the command is to clear, not to set a color
         songColorHex = "Clear"
         # sets the field to "Clear" so that SBO-WS can add the default value
-        print(f"{Time()}[RGBA]: Song text color cleared")
+        print(f"{Time()}[COLOR]: Song text color cleared")
         # color user inform
     else:
         songColorHex = color
         # sets the color to match
-        print(f"{Time()}[RGBA]: Song text color set to: {color}")
+        print(f"{Time()}[COLOR]: Song text color set to: {color}")
         # color user inform
 
 def textColor(color: str):
     """Changes the color of the overlay text"""
     global textColorHex
     if color == "clear":
-        # if the command is to clear, not to set a color
+    # if the command is to clear, not to set a color
         textColorHex = "Clear"
         # sets the field to "Clear" so that SBO-WS can add the default value
-        print(f"{Time()}[RGBA]: Text color cleared")
+        print(f"{Time()}[COLOR]: Text color cleared")
         # color user inform
     else:
         textColorHex = color
         # sets the color to match
-        print(f"{Time()}[RGBA]: Text color set to: {color}")
+        print(f"{Time()}[COLOR]: Text color set to: {color}")
         # color user inform
 
 def barColor(color: str):
     """Changes the color of the progress bar"""
     global barColorHex
     if color == "clear":
-        # if the command is to clear, not to set a color
+    # if the command is to clear, not to set a color
         barColorHex = "Clear"
         # sets the field to "Clear" so that SBO-WS can add the default value
-        print(f"{Time()}[RGBA]: Progress bar color cleared")
+        print(f"{Time()}[COLOR]: Progress bar color cleared")
         # color user inform
     else:
         barColorHex = color
         # sets the color to match
-        print(f"{Time()}[RGBA]: Progress bar color set to: {color}")
+        print(f"{Time()}[COLOR]: Progress bar color set to: {color}")
         # color user inform
 
-def overlayColor(color: str):
+def overlayColor(color: str, client_socket=None):
     """Changes the color of the overlay borders"""
     global overlayColorHex
     if color == "clear":
-        # if the command is to clear, not to set a color
+    # if the command is to clear, not to set a color
         overlayColorHex = "Clear"
         # sets the field to "Clear" so that SBO-WS can add the default value
-        print(f"{Time()}[RGBA]: Overlay color cleared")
+        print(f"{Time()}[COLOR]: Overlay color cleared")
         # color user inform
-    else:
+    elif not " " in color:
+    # if there's only one color (no spaces)
         overlayColorHex = color
         # sets the color to match
-        print(f"{Time()}[RGBA]: Overlay color set to: {color}")
+        print(f"{Time()}[COLOR]: Overlay color set to: {color}")
         # color user inform
+    else:
+    # if the command isn't clear, and there is a space or multiple
+        colors = color.split()
+        # splits the colors by spaces
+        readyColors = []
+        # creates an empty list of colors that are ready to go
+        currentColors = colorLoader()
+        # grabs the most recent color map from json
+        for each in colors:
+        # goes through each color
+            if hexCheck(each):
+            # if they pass the hex check
+                if each.startswith("#"):
+                # if the color already starts with a #
+                    hexCode = each
+                    # doesn't need to do anything, it's already a hex code with a #
+                else:
+                # if the color doesn't start with a #   
+                    hexCode = "#" + each
+                    # adds the # to the start
+            else:
+            # if they don't pass the hex check
+                if each in currentColors:
+                    # if the color is in the map
+                    hexStr = currentColors[each]
+                    # grabs the hex code ID from the map
+                    hexCode = "#" + hexStr
+                    # adds the # in front (map doesn't store them)
+                else:
+                    print(f"{Time()}[COLOR]: No {each} in the colormap/not a valid hex code; using a random color")
+                    # prints fail message
+                    randomColor = random.choice(list(currentColors.keys()))
+                    # selects a random color key from the map
+                    hexCode = "#" + currentColors[randomColor]
+                    # grabs the random color from the map and uses it
+                    print(f"{Time()}[COLOR]: Selected {randomColor}")
+                    # prints random color out
+
+            hexCode = stringCleaner(hexCode)
+            # cleans the string (sometimes they have random empty space from Twitch, could be a "can't repeat message" bypass?)
+            readyColors.append(hexCode)
+            # adds the ready hex code to the list
+        readyColorString = ", ".join(readyColors)
+        # creates a string by joining all the hex codes together
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as webClient:
+            # starts a new connection (with the same parameters)
+            webClient.connect(("127.0.0.1", webClientPort))
+            # connects to the existing host
+            webClient.sendall(readyColorString.encode("utf-8"))
+            # sends the message
+            webClient.close()
+            # stops the connection when it's done
+            print(f"{Time()}[PTP]: Sent overlay colors to WS")
+            # user inform on progress
+
+
+
+### Self-Restart ###
+
+
+
+def restarter():
+    """Function to restart this program"""
+    sbo = sys.executable
+    # grabs this executable
+    sboPy = sys.argv[0]
+    # grabs this script name
+    subprocess.Popen([sbo, sboPy])
+    # restarts itself as a subprocess
+    sys.exit()
+    # exits the current instance
 
 
 
@@ -850,7 +1157,7 @@ def song():
             # updates the song counter
 
             songChanged = True
-            # changes the songChanged boolean to true, tells the loop to update the song names later
+            # changes the songChanged boolean to true, tells the loop to update the song names
 
         if not isLocalSong and csItem:
             # can't access these if the playing song is local or csItem is None
@@ -942,8 +1249,6 @@ def song():
             # opens the sbo text file
             txt.write(sboFull)
             # writes the full song information to the text file
-            print(f"{Time()}[INFO]: sbo.txt updated")
-            # prints an update
 
         if songChanged:
             # if the song has changed (changes after the text file to prevent the songs being the same
@@ -969,6 +1274,8 @@ def looper():
     """Function that checks song info on a loop"""
     global currentURI, currentInfo, pauseUpdated, trackCounter, callSong, updateProgress
     # grabs the "global" variables (outside the function) as local variables
+    newSong = True
+    # sets the new song boolean once
     while True:
         # this loop checks if the song playing is the same as the previous update, waits if yes, updates the song to match if not
 
@@ -980,8 +1287,8 @@ def looper():
 
         if not info or not info.get("item"):
             # checks if the info has something and if it can be called
-            print(f"{Time()}[WARN]: No playing state detected, re-checking in 2 seconds\n")
-            time.sleep(2.5)
+            print(f"{Time()}[WARN]: No playing state detected, re-checking in 5 seconds\n")
+            time.sleep(5)
             # waits for a few seconds
             continue
         
@@ -996,19 +1303,24 @@ def looper():
         # grabs the progress of the song at the pull time (ms/1000 = seconds)
         timeNow = int(time.time())
         # grabs the current time
-        songStart = int(timeNow - songProg)
-        # stores the start time of the song by taking current time and subtracting progress
-        playing = info.get("is_playing")
+        playing = bool(info.get("is_playing"))
         # checks the pause state (True if playing, False if not)
+        lastActionTS = int(info.get("timestamp"))
+        # stores the timestamp that the last action happened (play, pause, skip, scrub, new song)
+
+        if newSong or currentURI is None:
+            # if the song has changed or none is set
+            songStart = int(timeNow - songProg)
+            # stores the start time of the song by taking current time and subtracting progress
+            newSong = False
+            # sets the boolean to false, since it's been processed now
 
         if currentURI is None:
             # when the program first starts, the currentURI will be "None", this updates it, along with other variables
             currentURI = songURI
             # sets the current song to match 
-            storedStart = songStart
-            # updates the timestamp to match
-            expectProg = int(timeNow - songStart)
-            # calculates the expected progress from the current time - the starting timestamp
+            expectProg = (songProg + 2)
+            # calculates the expected progress by taking the current progress and adding 2 seconds (1 cycle time)
             progressMismatch = False
             # initialises the progress boolean as false
             trackCounter += 1
@@ -1019,60 +1331,68 @@ def looper():
             # user inform on first song
 
         songDur = int((info.get("item")).get("duration_ms")/1000)
-        # grabs both the current time and length of the song (in seconds)
+        # grabs the length of the song (in seconds)
         songLeft = (songDur - songProg)
         # calculates the time left on the song
         progressOffset = abs(songProg - expectProg)
         # checks if the difference between the Spotify given progress and the calculated progress
 
-        if (progressOffset >= 6):
-            # checks if there's a mismatch between expected and real progress of > 6 seconds (generally it's ~2-3 seconds)
+        if ((songStart + songDur + 2) > timeNow) and ((timeNow - lastActionTS) >= songDur) and (songProg < 3):
+            # if the song "should've" ended (start + duration + slight addition > now) and the song hasn't been touched in any way during its playback
+            newSong = True
+            # sets the newSong boolean to True, because the song very likely did
+
+        if (currentURI != songURI):
+            # if the URIs don't match
+            newSong = True
+            # sets the newSong boolean to True
+
+        if (progressOffset >= 6 and playing):
+            # checks if there's a mismatch between expected and real progress of >= 6 seconds 
+            # leaves a delta of 3-4 seconds, any change larger than that is scrubbing, or at the very least worth updating the overlay
             progressMismatch = True
-            # if there is, sets the flag to true (will cause an update)
-            expectProg = int(timeNow - songStart)
-            # calculates the expected progress from the current time - the starting timestamp 
+            # if there is, sets the flag to True (will cause an update)
+            expectProg = (songProg + 2)
+            # calculates the expected progress by taking the current progress and adding 2 seconds (1 cycle time)
         else:
-            # if the mismatch isn't big enough, re-assigns the variable wtih a new value
-            expectProg = int(timeNow - songStart)
-            # calculates the expected progress from the current time - the starting timestamp 
+            # if the mismatch isn't big enough and the song is playing
+            expectProg = (songProg + 2)
+            # calculates the expected progress by taking the current progress and adding 2 seconds (1 cycle time)
 
-        if (currentURI != songURI) or ((songStart-5) > storedStart) or (pauseUpdated and playing) or progressMismatch:
+        if newSong or (pauseUpdated and playing) or progressMismatch:
         # if there's a reason to update the text file;
-        # a song change (if the URI has changed)
-        # the starting timestamps don't match
-        # if there's a pause or the start timestamp is higher than the stored timestamp) or if the pause has been triggered
+        # a song change (the URI has changed, must mean a new song)
+        # it mathematically has to be a new song (or something is very broken)
+        # if there was a pause, but is now playing (-> removes the "paused on" text)
+        # if a progress mismatch has been triggered (-> sets the correct times on overlay)
 
-            if not pauseUpdated:
-                # if console updates are enabled and this change wasn't triggered by a pause
+            if newSong:
+                # if the song URI is new, or the starting timestamps are very off
                 print(f"\n{Time()}[SONG]: New song: {songName}, duration: {songDur:,.0f} seconds")
                 # user update on new song (makes a new line before itself so it separates tracks)
-            elif pauseUpdated:
-                # if console updates are enabled and this change *was* triggered by a pause
-                print(f"\n{Time()}[SONG]: Unpaused: {songName}")
+                trackCounter += 1
+                # adds 1 to counter (means track has changed)
+                currentURI = songURI
+                # changes the internal variable to match new song
 
-            currentURI = songURI
-            # changes the internal variable to match new song
-            storedStart = songStart
-            # changes timestamp variable to match
+            if progressMismatch and playing:
+                # checks if there was a progress mismatch (has to be playing)
+                progressMismatch = False
+                # sets the mismatch flag to false
+                updateProgress += 1
+                # adds 1 to the updateProgress counter (tracks the progress updates for overlay)
+
             songEvent.set()
             # sets an event to make song() update the text file
             callSong = False
             # if a new song is set, it'll run the song() normally, no need to separately run
-            if progressMismatch:
-                # checks if there was a progress mismatch
-                progressMismatch = False
-                # sets the mismatch flag to false
-                updateProgress += 1
-                # adds 1 to the updateProgress counter
 
-            if pauseUpdated:
+            if pauseUpdated and playing:
                 # if it's playing and the pauseUpdate has been set to true
+                print(f"\n{Time()}[SONG]: Unpaused: {songName}")
+                # prints the update message
                 pauseUpdated = False
                 # sets the pauseUpdated to false, so it doesn't run twice
-            else:
-                # if it's playing but pauseUpdate is false
-                trackCounter += 1
-                # adds 1 to counter (means track has changed)
 
             time.sleep(1.5)
             # waits a second
@@ -1090,7 +1410,7 @@ def looper():
             print(f"\n{Time()}[SONG]: Paused on: {songName}")
             # user inform (new line to split from main updates, only prints once anyway)
             sleepfor = 2
-            # sets the sleep timer to the config-set refresh time
+            # waits a couple seconds
 
         if callSong:
             # if there's a callSong request from colorChanger, and both checks passed (no new song, no pause state)
@@ -1115,7 +1435,7 @@ def looper():
 
 
 
-### Load Commands ###
+### Startup Commands ###
 
 
 
@@ -1153,6 +1473,12 @@ if runBot:
     # creates a thread for the SBO-Bot program to run in - this way it won't stop the main process
     botThread.start()
     # starts the SBO-Bot thread
+
+
+customColors = colorLoader()
+# calls the color loader function, which loads the custom colors into a global variable
+print(f"{Time()}[COLOR]: Found {len(customColors)} custom colors!")
+# user inform on colors
 
 
 looper()
