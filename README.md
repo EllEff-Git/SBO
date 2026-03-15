@@ -3,6 +3,7 @@
 ### SBO is a Python program that takes your current Spotify playback and dynamically creates an HTML page, locally
 
 *Customised appearance with different colored elements*
+
 ![Main Demo](https://i.imgur.com/KDsuOwK.png)
 
 
