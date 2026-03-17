@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 
-SBO_Bot_ver = "v0.3.15.0552"
+SBO_Bot_ver = "v0.3.17.1227"
 """The SBO Bot version (y.m.dd.hhmm)"""
 
 
@@ -45,6 +45,9 @@ logging.getLogger("twitchio").setLevel(logging.WARNING)
 
 logging.getLogger("twitchio.client").setLevel(logging.ERROR)
 # sets the TwitchIO Client to only print on error or higher (there's a couple irrelevant warnings)
+
+logging.getLogger("twitchio.commands").setLevel(logging.CRITICAL)
+# sets the TwitchIO Commands to only print on critical errors (prints some useless stuff by default)
 
 LOGGER = logging.getLogger("BOT")
 # starts the consoler logger
@@ -893,6 +896,10 @@ class CommandComponent(commands.Component):
                 try:
                     cmd, songLink = fullMsg.split(" ", 1)
                     # splits the command and link, stores link
+
+                    songLink.strip()
+                    # ensures no spaces make it through unintentionally
+
                     if len(songLink) == 22 or songLink.startswith(("https://open.spotify.com/", "spotify:")):
                         # must be one of: "song uri, id, or url", so it checks if the length matches an ID's 22 character length
                         # or if the song starts with https://open.spotify.com/ or spotify: (signs of a valid URL or track URI)
@@ -934,7 +941,11 @@ class CommandComponent(commands.Component):
                 try:
                     cmd, color = fullMsg.split(" ", 1)
                     # splits the command, stores the hex color code as color
-                    dataPasser("Song Color", color)
+
+                    color = color.strip()
+                    # ensures no empty space makes it through
+
+                    dataPasser("Overlay Color", color)
                     # calls the dataPasser function with the color
 
                     if color.lower() == "clear":
@@ -971,7 +982,11 @@ class CommandComponent(commands.Component):
                 try:
                     cmd, color = fullMsg.split(" ", 1)
                     # splits the command, stores the hex color code as color
-                    dataPasser("Text Color", color)
+
+                    color = color.strip()
+                    # ensures no empty space makes it through
+
+                    dataPasser("Overlay Color", color)
                     # calls the dataPasser function with the color
 
                     if color.lower() == "clear":
@@ -1008,7 +1023,11 @@ class CommandComponent(commands.Component):
                 try:
                     cmd, color = fullMsg.split(" ", 1)
                     # splits the command, stores the hex color code as color
-                    dataPasser("Bar Color", color)
+
+                    color = color.strip()
+                    # ensures no empty space makes it through
+
+                    dataPasser("Overlay Color", color)
                     # calls the dataPasser function with the color
 
                     if color.lower() == "clear":
@@ -1045,6 +1064,9 @@ class CommandComponent(commands.Component):
                 try:
                     cmd, color = fullMsg.split(" ", 1)
                     # splits the command, stores the hex color code as color
+
+                    color = color.strip()
+                    # ensures no empty space makes it through
 
                     dataPasser("Overlay Color", color)
                     # calls the dataPasser function with the color

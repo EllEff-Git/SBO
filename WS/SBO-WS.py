@@ -1,6 +1,6 @@
 import asyncio, os, sys, json, time, configparser
 # Required for file directory grabs, reads, asynchronous functions, etc
-import uvicorn, socket, threading, random
+import uvicorn, socket, threading
 # Required for websocketing and site management
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 # Required for web server hosting
@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 # Required for getting status from server
 
 
-SBO_WSver = "v0.3.15.0609"
+SBO_WSver = "v0.3.17.1219"
 """The program version (y.m.dd.hhmm)"""
 
 
@@ -64,12 +64,6 @@ enableBot = Config.getboolean("Twitch-Bot", "enable_Twitch_Bot")
 
 ### Visuals ###
 
-playerWidth = Config.getint("Visuals", "player_Width", fallback=420)
-"""The width of the player in HTML (int, pixels)"""
-playerHeight = Config.getint("Visuals", "player_Height", fallback=90)
-"""The height of the player in HTML (int, pixels)"""
-playerOpacity = Config.getfloat("Visuals", "player_Opacity", fallback=0.75)
-"""The opacity of the player in HTML (float)"""
 artistPrefix = Config.get("Visuals", "artist_Prefix", fallback="by")
 """A prefix string for the artist field (string)"""
 albumPrefix = Config.get("Visuals", "album_Prefix")
@@ -109,7 +103,7 @@ defaultSupportColors = "#" + Config.get("Support", "support_Colors", fallback="f
 
 ### Border ###
 
-defaultBorderColor = "#" + Config.get("Border", "border_Color", fallback="ffffff")
+defaultBorderColor = Config.get("Border", "border_Color", fallback="ffffff")
 """The default color for border (may be overwritten via SBO due to Bot (string, hex))"""
 
 ### Progress Bar ###
@@ -142,10 +136,8 @@ allTypes = {
 # progress means the progress change was too large (user skipped a part of song), just sets the progress to match
 
 
-newKeyframes = True
-"""A boolean to tell the program to re-upload the keyframes file"""
-newColors = []
-"""A list that stores the colors sent by SBO when generating new keyframes, gets passed via WS"""
+newColors = asyncio.Queue()
+"""A queue to tell the program to send colors via WebSocket"""
 
 
 print(f"HTML overlay program {SBO_WSver} starting", flush=True)
@@ -164,14 +156,17 @@ if "," in defaultBorderColor:
         # adds a # to the start of the hex code and strips empty space
     defaultBorderColor = ", ".join(borderColors)
     # joins the string back together with commas (now with # in front of each code)
+    newColors.put_nowait(borderColors)
+    # puts the border colors into the queue
+else:
+    # if no commas are found (1 color)
+    defaultBorderColor = "#" + defaultBorderColor
+    # adds a # to the front
 
 
 HTMLconfig = {
     "httpPort": httpPort,
     "playerTimeout": playerTimeout,
-    "playerWidth": playerWidth,
-    "playerHeight": playerHeight,
-    "playerOpacity": playerOpacity,
     "titleStyle": titleStyle,
     "titleWeight": titleWeight,
     "titleColor": defaultTitleColor,
@@ -199,6 +194,7 @@ if runBot:
     # if SBO should run the bot
     enableBot = True
     # also enables the bot connection
+
 
 if enableBot:
     # if the bot is enabled
@@ -275,10 +271,12 @@ def unixConverter(sbo: dict) -> tuple[int, int]:
         return 0, 1
 
 
+
 def noneRemover(string: str):
     """Function that ensures no "None" values are sent through payload (None breaks JS)"""
     return None if string in (None, "None", "") else string
     # if the given string matches None, "None" or "", it returns None - otherwise returns the string
+
 
 
 def payloadBuilder(map: dict, type: str, fields: list) -> str:
@@ -298,10 +296,10 @@ def payloadBuilder(map: dict, type: str, fields: list) -> str:
     # returns the full built payload in json format
 
 
+
 def webHostListener():
     """Websocket message host/listener"""
-    global newKeyframes, newColors
-    # takes the global variable here, so it can be reassigned
+
     print(f"Waiting for SBO to connect", flush=True)
     # prints the message on program start
 
@@ -329,45 +327,8 @@ def webHostListener():
                     # gets the colors from the message by splitting via commas
                     colors = [color.strip() for color in colors]
                     # strips each color for extra space
-                    newColors = colors
-                    # sets the global variable to match
-
-                    keyframes = f"@keyframes gradientBorder {{\n"
-                    # starts by defining it as a keyframe of gradientBorder
-
-                    colorCount = len(colors)
-                    # gets the number of colors passed
-                    
-                    for i in range(colorCount):
-                        # repeats for the amount of colors given
-                        percentage = (i / (colorCount - 1)) * 100
-                        # calculates a progress percentage based on colors given
-                        keyframes += f"    {percentage}% {{\n"
-                        # adds the animation progress
-                        keyframes += f"        border-image: linear-gradient(45deg, "
-                        # adds the animation style
-                        random.shuffle(colors)
-                        # mixes the order of the colors to create dynamic coloring (otherwise it'll just not move, since all percentages match)
-                        colorString = ", ".join(colors)
-                        # creates a string for the next line to use
-                        keyframes += f"{colorString}) 1;\n"
-                        # adds the randomly shuffled colors in
-                        keyframes += "    }\n"
-                        # adds a newline in between
-
-                    keyframes += "}\n"
-                    # adds the final bracket and newline to the keyframes to close it
-
-                    with open(keyframesTxt, "w") as kf:
-                        # opens the keyframe file in write mode
-                        kf.write(keyframes)
-                        # saves the keyframes into the keyframes.txt file
-
-                    print(f"Keyframe file updated with new colors", flush=True)
-                    # user inform
-
-                    newKeyframes = True
-                    # sets the flag for new keyframes to True so the program can catch the changes
+                    newColors.put_nowait(colors)
+                    # puts the color list into the queue
 
                 except socket.error as soc:
                     print(f"Socket error with command: {soc}")
@@ -379,31 +340,27 @@ def webHostListener():
             print(f"Error forming connection: {socF}")
 
 
+
 @program.get("/")
 # gets the HTML page
-def index():
+async def index():
     return FileResponse(site)
 
-
-@program.get("/keyframes.txt")
-# gets the keyframe file
-async def keyframePush():
-    return FileResponse(keyframesTxt, media_type="text/plain")
-    # sends the keyframes.txt to websocket
 
 
 @program.get("/config.json")
 # gets the config file
-def configPush():
+async def configPush():
     return FileResponse(jsonCfg, media_type="application/json")
     # sends the json dictionary that python made from config.ini
     # this can be seen by going to localhost:(port)/config.json
 
 
+
 @program.websocket("/ws")
 # handles the websocket
 async def websocket(ws: WebSocket):
-    global allTypes, newKeyframes, newColors
+    global allTypes, newColors
 
     await ws.accept()
     # gets the connection
@@ -450,9 +407,6 @@ async def websocket(ws: WebSocket):
         oldTrackID = initialPayload["id"]
         # stores the ID to check for a song change
 
-        oldProgressCheck = sbo.get("Progress Mismatch", 0)
-        # stores the first progress mismatch count
-
         oldPauseState = sbo.get("Pause State", False)
         # grabs the first pause state boolean
 
@@ -468,24 +422,27 @@ async def websocket(ws: WebSocket):
         while True:
         # this runs constantly after, with a short cooldown, thanks to the "await asyncio.sleep(2)" at the end of the loop
 
-            if newKeyframes:
-                # if there are new keyframes to use
-                await keyframePush()
-                # calls the keyframe pusher to upload the text file to socket
-                await asyncio.sleep(1)
-                # sleeps for a second to ensure the keyframes are up
+            try:
+                # cheks if there are new colors
+                colors = newColors.get_nowait()
+                # if there's new colors, gets the colors and moves them to "colors" variable
                 colorMap = {
-                    "colors": newColors
+                    "colors": colors
                 }
-                # creates a map with the newColors from global, stored by webhost 
-                await ws.send_text(payloadBuilder(colorMap, "keyframes", ["colors"]))
-                # tells the websocket there's new keyframes, passes the colors along with the command
-                newKeyframes = False
-                # sets the keyframe boolean to false so it doesn't trigger again until new keyframes exist
-                await asyncio.sleep(1)
-                # sleeps for a second
+                # creates a map with the colors
+                await ws.send_text(payloadBuilder(colorMap, "color", ["colors"]))
+                # tells the websocket there's new colors, constructs new payload
+                newColors.task_done()
+                # tells the queue that the task is done
+                await asyncio.sleep(2)
+                # sleeps for a couple seconds
                 continue
                 # goes back to loop start
+
+            except asyncio.QueueEmpty:
+                # if the queue is empty
+                pass
+                # goes to next part, because that's expected
 
             sbo = readSBO()
             # calls readSBO and then stores the dictionary here as sbo
@@ -503,9 +460,6 @@ async def websocket(ws: WebSocket):
 
                 songProg, songDur = unixConverter(sbo)
                 # stores the progress and duration times from unixConverter
-
-                currentProgressCheck = sbo.get("Progress Mismatch")
-                # stores the current progress mismatch count
 
                 currentPauseState = sbo.get("Pause State", False)
                 # stores the current pause state
@@ -545,18 +499,6 @@ async def websocket(ws: WebSocket):
                 payload["progress"] = songProg
                 payload["duration"] = songDur
                 # adds the timestamps *after* checking against the old version
-
-                ### PROGRESS CHECK ###
-
-                if currentProgressCheck != oldProgressCheck:
-                    # checks if the old progress check count is the same as new (has there been a new occurance of a progress mismatch)
-                    oldProgressCheck = currentProgressCheck
-                    # saves the new value as the old
-                    progressMismatch = True
-                    # stores info on whether or not SBO registered a new progress mismatch
-                else:
-                    # if they are the same
-                    progressMismatch = False
 
                 ### TRACK ID CHECK ###
 
@@ -598,7 +540,7 @@ async def websocket(ws: WebSocket):
 
                 ### PAYLOAD SELECTION ###
 
-                if colorChange and (songChange or pauseChange or progressMismatch):
+                if colorChange and payloadDiff:
                     # if the color has changed AND *any* of the other 3
                     await ws.send_text(payloadBuilder(payload, "full", allTypes["full"]))
                     # sends a full payload (track + colors)

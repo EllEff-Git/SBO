@@ -4,11 +4,11 @@
 Data/*
 WS/*
 !WS/SBO-WS.py
-!WS/keyframes.txt
 Bot/*
 !Bot/SBO-Bot.py
 !Bot/commandConfig.ini
 !Bot/customCommands.txt
+Web/indexTemp.html
 todo.txt
 SBO.ico
 SBO.xcf
@@ -16,3 +16,5 @@ SBO.spec
 SBO.exe
 *.zip
 colorStringsTemp.json
+restartSBO.bat
+dreaming2.png

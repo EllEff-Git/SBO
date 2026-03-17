@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.3.15.0552</title>
+<title>Spotify Overlay v0.3.17.0721</title>
 
 <script>
 
@@ -16,13 +16,13 @@ let duration = 1, tempProgress = 1;
 let lastUpdateTime = Date.now();
 
 // initialises player visual variables
-let maxInfoSize = 0, playerTimeout = 0;
+let maxInfoSize = 0, playerTimeout = 0, outerX = 0, outerY = 0;
 
 // initialises a boolean for pause state stuff
 let isPaused = false, isHidden = false;
 
 // initialises global variables (websocket + all the elements)
-let ws, player, cover, border, background, titleElement, artistElement, albumElement, bar, timer;
+let ws, player, cover, fakeBorder, background, titleElement, artistElement, albumElement, bar, timer;
 
 // initialises global color variables
 let defaultTitleColor, defaultSupportColors, defaultBorderColor, defaultProgressColor;
@@ -30,12 +30,15 @@ let defaultTitleColor, defaultSupportColors, defaultBorderColor, defaultProgress
 // initialises widths for player 
 let playerWidthRaw = 0, playerHeightRaw = 0;
 
+// defines the keyframes and color array (empty, will be filled on load)
+let KF, KFcolors;
+
 // waits for the HTML to be fully loaded, then loads the rest
 document.addEventListener("DOMContentLoaded", () => {
     // updates global constants to match elements 
     player = document.getElementById("player");
     cover = document.getElementById("cover");
-    border = document.getElementById("border");
+    fakeBorder = document.getElementById("fakeBorder");
     background = document.getElementById("background");
     titleElement = document.getElementById("title");
     artistElement = document.getElementById("artist");
@@ -48,18 +51,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // grabs the config.json file (sent by SBO-WS.exe during startup)
     // you can see this if you go to localhost:(httpPort)/config.json (httpPort being the config port)
-    fetch("/config.json")
+    fetch("/config.json", {cache: "no-store"})
 
         // loads the config options as Config
-        .then(res => res.json())
-        .then(Config =>{
+        .then(res => {
+            // if the file isn't loaded properly
+            if (!res.ok) {
+                // sends error to log
+                throw new Error("Failed to get config.json");
+            }
+            // otherwise, returns the json file
+            return res.json();
+        })
+        // reads the config
+        .then(Config => {
 
         // sets all the variables that the elements use based on loaded config.json file
-        
-        // stores the player size here first (can be directly replaced with a number, easy debug access)
-        playerWidthRaw = Config.playerWidth; // 500
-        // playerHeightRaw is *typically* the boundary to the image size, which is 90% of the height
-        playerHeightRaw = Config.playerHeight; // 100
         
         // stores the config colors in these "default variables"
         defaultTitleColor = Config.titleColor;
@@ -67,13 +74,11 @@ document.addEventListener("DOMContentLoaded", () => {
         defaultProgressColor = Config.progressBarColor;
         defaultBorderColor = Config.borderColor;
 
-        // checks if the border color has more than 1 color (applies gradient formatting if yes)
-        gradientCheck(Config.borderColor);
+        const elementID = "spinner";
+
+        // calls the gradientCheck to set the color variables/border
+        gradientCheck(defaultBorderColor, elementID);
         
-        // player size + opacity
-        document.documentElement.style.setProperty("--playerWidth", playerWidthRaw + "px");
-        document.documentElement.style.setProperty("--playerHeight", playerHeightRaw + "px")
-        document.documentElement.style.setProperty("--playerOpacity", Config.playerOpacity);
         // title styling
         document.documentElement.style.setProperty("--titleStyle", Config.titleStyle);
         document.documentElement.style.setProperty("--titleWeight", Config.titleWeight);
@@ -90,11 +95,12 @@ document.addEventListener("DOMContentLoaded", () => {
         playerTimeout = (Config.playerTimeout * 1000);
 
         // sets a constant for the max size the info fields can be (removes the padding and image size from player size)
-        maxInfoSize = (playerWidthRaw - (playerHeightRaw * 0.9) - 12);
+        // since there's a 12px gap (same as padding), this only removes 1 padding, the gap basically acts as the other one
+        maxInfoSize = (420 - (90 * 0.9) - 12);
 
         // defines the max size for the info fields (text, progress container (bar + timer))
         document.documentElement.style.setProperty("--maxInfoWidth", maxInfoSize + "px");
-        
+
         // saves the http port as a constant
         const wsPort = Config.httpPort;
         // creates a websocket to that port
@@ -116,19 +122,21 @@ document.addEventListener("DOMContentLoaded", () => {
             setTimeout(() => {
                 console.log("Attempting reconnect");
                 ws = new WebSocket(`ws://127.0.0.1:${wsPort}/ws`);
-                }, 5000);
+                }, 10000);
         };
         // when it gets a new "message" (payload) from python
         ws.onmessage = (event) => {
 
             // opens and stores the data
             const data = JSON.parse(event.data);
-            
-            console.log("Payload type:", data.type, "data:", data) // debug, shows the payload information in the browser console
+
+            // debug, shows the payload information in the browser console
+            console.log("Payload type:", data.type, "data:", data) 
 
             // "data.type" (given by SBO-WS in payload) determines what updates are performed:
             // "full" does both updates below, "track" runs player-related changes and timestamps, "color" only colors;
             // "progress" only happens if SBO spots the real progress and expected progress doesn't match (within a set threshold)
+            // "keyframes" includes nothing, but tells the JS to load the new keyframes from keyframes.txt
             // this allows the Twitch chat commands to not re-run the entire program just to change colors
 
             // if the set data type is "track" or "full" (meaning song has changed)
@@ -212,10 +220,19 @@ document.addEventListener("DOMContentLoaded", () => {
                     }, 250)
                 }
             }
-            // if the data type is "color" or "full" (meaning a chat command -> color change)
+            // if the data type is "color" (meaning a chat command -> color change) or "full"
             if (data.type === "color" || data.type === "full") {
-                const emptyKeyframes = "@keyframe"
-                gradientCheck(data.borderColor, emptyKeyframes)
+                // stores the spinner element string
+                const elementID = "spinner";
+                // if there's a borderColor (config)
+                if (data.borderColor) {
+                    // calls gradientCheck, passing the borderColor from data and the element ID to be passed
+                    gradientCheck(data.borderColor, elementID);
+                }
+                else if (data.colors) {
+                    // sends the colors from data instead
+                    gradientCheck(data.colors, elementID)
+                }
                 // calls the function to change the colors
                 colorChanger(data);
             }
@@ -224,24 +241,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 // updates the progress variable to match real-ish time
                 currentProgress = data.progress;
             }
-            // if the data type is "keyframes" (used !overlayColor with multiple colors)
-            if (data.type === "keyframes") {
-                // user inform in console
-                console.log("Received keyframe command, loading new keyframes")
-                // grabs the latest keyframe file from websocket
-                fetch("/keyframes.txt")
 
-                // loads the keyframes as KF
-                .then(res => res.text())
-                .then(KF =>{
-                    //console.log("Keyframes file contains:", KF); // debug
-                    // calls the gradient check with the colors and the keyframes
-                    gradientCheck(data.colors, KF)
-                })
-                .catch(err => {
-                    console.error("Error grabbing keyframes", err);
-                })
-            }
             // if the player isn't paused, regardless of payload type
             if (!isPaused) {
                 // sets the player hider variables to null
@@ -253,8 +253,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 player.style.opacity = 1;
                 background.style.transition = "opacity 1s";
                 background.style.opacity = 1;
-                border.style.transition = "opacity 1s";
-                border.style.opacity = 1;
+                fakeBorder.style.transition = "opacity 1s";
+                fakeBorder.style.opacity = 1;
                 // sets the flag back to false so it can rerun if necessary
                 isHidden = false;
             }
@@ -264,15 +264,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
 </script>
 
-<!-- the player element, contains all elements -->
+<body>
+
+<!-- fake border is the element that gets the player size cut out, sits on top of everything
+        basically just a rectangle that gets its center diced off to allow transparency -->
+<div class="fakeBorder" id="fakeBorder">
+    <!-- spinner is the color-matched box that spins behind fakeBorder, to allow the colors to pass through -->
+    <div class="spinner" id="spinner"></div>
+</div>
+<!-- the player element, contains all fields/elements -->
 <div id="player">
-    <!-- the background element, sits below everything for depth/blur -->
+    <!-- the background element, sits below player to add a background (image, color, opaque...) -->
     <div id="background"></div>
-    <!-- border, is... a border -->
-    <div id="border"></div>
-    <!-- the image/cover -->
+    <!-- the image/album cover -->
     <img id="cover" src="">
-    <!-- the field container-->
+    <!-- the field container (text fields, progress bar, timer)-->
     <div id="info">
         <!-- the text wrapper for the title field -->
         <div class="text-wrapper">
@@ -296,37 +302,39 @@ document.addEventListener("DOMContentLoaded", () => {
     </div>
 </div>
 
+<!-- svg element used to "cut out" the fake border element so it looks like a border but acts as a box (better for animations)
+    these measurements should be identical to the white box below, they're just the fakeBorder's measurements -->
+<svg width="454px" height="124px">
+    <defs>
+        <!-- the mask's ID -->
+        <mask id="playerCutout">
+            <!-- the white rectangle is the area that will be visible (should match the fake border's size)
+                x,y are position, rx,ry are corner rounding numbers / the white's x and y should be 0, so it's aligned with the fakeBorder
+                black's x and 5 should match the border thickness you're aiming for (5px borders = 5,5) -->
+            <rect x="0" y="0" width="454px" height="124px" rx="18" ry="18" fill="white"/>
+            <!-- the black rectangle is the player's area, which will be cut out from the fake border box to make it transparent (so player can be seen)
+                as such, the sizes should match player *including* its padding (currently 12px, so 420 + 12 + 12 = 444px) for both width and height -->
+            <rect x="5" y="5" width="444px" height="114px" rx="15" ry="15" fill="black"/>
+        </mask>
+    </defs>
+</svg>
+
+</body>
 <style>
-
-/*
-Hello!
-
-If you're here, editing things manually, I hope you enjoy your stay :)
-
-You can replace any/all the "var(--someVariable)" references below if you don't want the config file to touch those
-
-There's a ton of customisation to be done, and I wish the most amazing Spotify covers upon you
-
-glhf <3
-*/
 
 /* some mega-override element that breaks everything */
 div {
-    display: flex;
     /* if this isn't set, uses block by default, which prevents text element scaling
-    that means the text fields just use the max width they have, and *always* scroll */
+        that means the text fields just use the max width they have, and *always* scroll */
+    display: flex;
 }
 
 /* base page body */
 body {
+    /* background must be transparent for capture to function, otherwise will capture that color under the player */
     background: transparent;
+    /* can be used to change the font for all texts, or the font can be defined per-field below */
     font-family: "Segoe UI", sans-serif;
-    color: #ffffff;
-}
-
-/* width setting globally */
-body, html, #background, #player {
-    width: 100%;
 }
 
 /* a background element behind the player, added to add more blur/opaqueness */
@@ -335,15 +343,13 @@ body, html, #background, #player {
     position: absolute;
     /* 0 in everything ensures it follows the player settings */
     top: 0; bottom: 0; left: 0; right: 0;
-    /* how rounded the player corners should be */
-    /* border-radius: 12px; - disabled because "border" element is on top, re-enable if disabling border */ 
-    /* color (first 3) and opacity of the background */
-    background: rgba(0, 0, 0, 0.75);
-    /* padding matches player */
-    padding: 12px;
-    /* matches the player size */
-    width: var(--playerWidth, 420px);
-    height: var(--playerHeight, 90px);
+    /* color and opacity of the background */
+    background-color: rgba(1, 1, 1, 0.8);
+    /* how rounded the player element's corners should be (should be 1px less than fakeBorder, to prevent gaps) */
+    border-radius: 14px;
+    /* matches the player size + the padding */
+    width: 444px;
+    height: 114px;
     /* z-index of background should be the lowest out of all*/
     z-index: 1;
 }
@@ -351,82 +357,100 @@ body, html, #background, #player {
 /* the player, aka the full base for all elements */
 #player {
     /* positioning of the player */
-    position: relative;
+    position: absolute;
     /* how far from the top-left corner the player should be */
-    top: 20px; bottom: 0px; left: 20px; right: 0px;
+    top: 10px; bottom: 0px; left: 10px; right: 0px;
     display: flex;
     align-items: center;
     /* space between the picture and other elements */
     gap: 12px;
     /* first 3 are color, the last number in background dictates how opaque it is */
-    background: rgba(25, 25, 25, var(--playerOpacity));
-    /* how rounded the player corners should be */
-    /* border-radius: 12px; - disabled because "border" element is on top, re-enable if disabling border */ 
+    background: rgba(25, 25, 25, 0.75);
+    /* how rounded the player element's corners should be (should be 1px less than fakeBorder, to prevent gaps) */
+    border-radius: 14px;
     /* how much space there is on the outside of the picture/text/timer elements */
     padding: 12px;
     /* player sizes */
-    width: var(--playerWidth, 420px);
-    height: var(--playerHeight, 90px);
+    width: 420px;
+    height: 90px;
     /* the depth of the player (must be higher than background, equal or lower than elements) */
     z-index: 2;
 }
 
-/* border element around the player */
-#border {
-    /* must be absolute, otherwise it turns into a piece of "player" */
+/* the "border" around the player - it's really just a box with an SVG cutout applied */
+.fakeBorder {
     position: absolute;
-    /* the border positioning, top and left should be the negatives of the border thickness */
-    top: -5px; bottom: 0px; left: -5px; right: 0px;
-    display: flex;
-    /* padding matches player */
-    padding: 12px;
-    /* uses the player's size */
-    width: var(--playerWidth, 420px);
-    height: var(--playerHeight, 90px);
-    /* how rounded the player corners should be, around 2x the border thickness is fairly rounded */
-    border-radius: 10px;
-    /* sets the background to not have color, so that the player can stay visible */
-    background-color: transparent;
+    /* how far from the top-left corner the player should be */
+    top: 5px; bottom: 0px; left: 5px; right: 0px;
+    /* width should be how wide the player is (with paddings) + how much border area you want (5px per side default) 
+        currently has small, 1.5px black borders, so this is -3px total */
+    width: 451px;
+    /* height is the same thing, (player + 2*padding + 2*border thickness) 
+        same as width, -3px for borders */
+    height: 121px;
+    /* how rounded the outer corners should be (should match rx,ry in the white box in SVG definition */
+    border-radius: 18px;
+    /* a z-index of 4 guarantees it stays on top of everything, should be > player's index to hide the player corners  */
+    z-index: 4;
+    /* applies the "mask" (the SVG) so that the center is completely removed, and the player can be seen through */
+    mask: url(#playerCutout);
+    /* webkit mask is just in case the browser/OBS is having trouble with the default mask type */
+    -webkit-mask: url(#playerCutout);
+    /* adds small borders around the whole player to give pop-effect in contrasty situations */
+    border: black 1.5px solid;
+    /* important to hide the extra parts of "spinner", otherwise there'll be a massive color box spinning behind the player */
     overflow: hidden;
-    /* how thick the border is (5px is a good "it's there, but not massive") */
-    border-width: 5px;
-    /* the "style" of the border (could be dotted, dashed, solid...) */
-    border-style: solid;
-    /* sets the animation, time and how to perform it (doesn't do anything on startup, only once >1 color is passed via !overlayColor) */
-    animation: gradientBorder 15s linear infinite alternate;
-    /* a z-index of 3 ensures it stays on top of the player element */
-    z-index: 3;
 }
 
-/* I was messing with how to force rounded corners, and while this wasn't the fix, I did find this had some pretty cool effects
-    as such, I'll just leave this here, rather than delete it :) 
-    it adds a second border in between the player and the real border, with mega rainbow potential 
-#border::before {
-    z-index: 2;
-    border-radius: inherit;
-    border: 5px solid transparent;
-    background: transparent;
-    border-image-source: linear-gradient(45deg, red, yellow);
-    border-image-slice: 1;
-    animation: borderAnimation 5s infinite linear;
-} */
-
-/* border class that gets activated when more than 2 overlay colors are set */
-#border.gradient {
-    /* should set the border radius (doesn't?) */
-    border-radius: 10px;
-    /* sets the animation, time and how to perform it */
-    animation: var(--gradient-animation) 15s linear infinite alternate;
+/* the "spinning" element (it's actually just a big box behind the border) */
+.spinner {
+    /* the width and height should be bigger than the biggest measurement of the border */
+    width: 500px;
+    height: 500px;
+    /* ensures it gets positioned according to the coordinates, not where the document thinks it should sit*/
+    position: absolute;
+    /* the top coordinate is (half of fakeBorder's height - half of spinner's size:
+        = (124 / 2) - 250 = 62px - 250 = -188 */
+    top: -188px; bottom: 0px; 
+    /* the left coordinate is (half of fakeBorder's width - half of spinner's size: 
+        = (454 / 2) - 250 = 227 - 250 = -23 */
+    left: -23px; right: 0px;
+    /* these fields are automatically overwritten by the gradientCheck below, these are mostly just fallbacks/guides */
+    /* sets the animation by name (always called gradientBorder, because that's what SBO-WS uses when building) */
+    animation-name: gradientSpinnerSpin;
+    /* how the animation should move between frames */
+    animation-timing-function: linear;
+    /* how long the total animation is (currently calculated based on # of colors at the very bottom of the document */
+    animation-duration: 40s;
+    /* how many times it should repeat the animation */
+    animation-iteration-count: infinite;
+    /* sets the "image" to a cone gradient (starts at middle, expands towards the edges) with the variable colors */
+    background-image: conic-gradient(#ffffff, #424242);
+    /* all the same stuff, but for webkit */
 }
 
-/* border class that gets set when only one color is given */
-#border.solid {
-    /* resets the "image" */
-    border-image: none;
-    /* sets the color to just the variable (either given color or default via fallback) */
-    border-color: var(--borderColor);
-    /* resets the animation */
-    animation: none;
+/* the keyframes to use when the gradient is applied (>= 2 colors) */
+@keyframes gradientSpinnerSpin {
+    0% {
+        /* sets the initial angle (0 degrees) */
+        transform: rotate(0deg);
+    }
+    100% {
+        /* sets the final angle (360 means it does 1 full loop per iteration) */
+        transform: rotate(360deg);
+    }
+}
+
+/* the keyframes to use when the gradient is not applied (0 or 1 colors) */
+@keyframes gradientSpinnerStop {
+    0% {
+        /* sets the initial angle (0 degrees) */
+        transform: rotate(0deg);
+    }
+    100% {
+        /* sets the final angle (0 in both means it doesn't move) */
+        transform: rotate(0deg);
+    }
 }
 
 /* album picture */
@@ -789,11 +813,6 @@ function colorChanger(data) {
         "--supportColors",
         data.supportColor && data.supportColor !== "Clear" ? data.supportColor : defaultSupportColors
     );
-    // sets the property for border color variable (based on what the data package contains - needs to be set, can't be "Clear", otherwise sets to default)
-    document.documentElement.style.setProperty(
-        "--borderColor",
-        data.borderColor && data.borderColor !== "Clear" ? data.borderColor : defaultBorderColor
-    );
     // sets the property for progress bar color variable (based on what the data package contains - needs to be set, can't be "Clear", otherwise sets to default)
     document.documentElement.style.setProperty(
         "--pbcNorm",
@@ -823,87 +842,113 @@ function playerHider() {
         player.style.opacity = 0;
         background.style.transition = "opacity 2s";
         background.style.opacity = 0;
-        border.style.transition = "opacity 2s";
-        border.style.opacity = 0;
-    // sets the flag to true so it can be detected when playback continues
-    isHidden = true;
-    // stops the loop (clears the 1s checking)
-    clearInterval(playerIntervalID);
+        fakeBorder.style.transition = "opacity 2s";
+        fakeBorder.style.opacity = 0;
+        // sets the flag to true so it can be detected when playback continues
+        isHidden = true;
+        // stops the loop (clears the 1s checking)
+        clearInterval(playerIntervalID);
     }
 }
 
 // function to check if gradient effect should be applied (checks if more than 1 color is passed, creates a dynamic color gradient)
-function gradientCheck(colorList, keyframes) {
+function gradientCheck(colorList, elementName) {
 
-    // defines the (empty) array for colors to be put into
-    let colors;
-
-    // if the color "list" is actually a string (when it's 1 color)
+    // if the color "list" is actually a string (when it's 1 color or when read via config)
     if (typeof colorList === "string") {
-        // directly trims the "list" and just uses the one single color as the list
-        colors = colorList.trim() === "" ? [] : [colorList.trim()];
+        // checks if there's a comma (multiple colors)
+        if (colorList.includes(",")) {
+            // splits and trims the string of colors
+            KFcolors = colorList.split(',').map(color => color.trim());
+        }
+        // if there's no comma (single color)
+        else {
+            // directly trims the "list" and just uses the one single color as the list
+            KFcolors = colorList.trim() === "" ? [] : [colorList.trim()];
+            // if the "color" is "Clear" (command to set back to default)
+            if (KFcolors[0] === "Clear") {
+                // sets the color string to default so it resets the color
+                KFcolors = "default";
+            }
+        }
     }
     // if the color list is undefined (no colors given in borderColor)
-    else if (typeof colorList === "undefined") {
-        colors = "default";
+    else if (typeof colorList === "undefined" || colorList === null) {
+        // if the colors aren't defined yet or it's set to default
+        if (KFcolors === "default" || KFcolors === null) {
+            // keeps/sets to default
+            KFcolors = "default";
+        }
+        // if the colors are defined 
+        else {
+            // keeps the defined colors
+            KFcolors = KFcolors;
+        }
     }
+    // if the color list is anything else (array, object)
     else {
-        // sets the "colors" variable by checking if the list is a true list (array) and applying color splitting/trimming
-        colors = Array.isArray(colorList) ? colorList : colorList.split(',').map(color => color.trim());
+        // if the content is empty (happens sometimes)
+        if (colorList === null) {
+            // keeps the already globally stored variable's content
+            KFcolors = KFcolors;
+        }
+        else {
+            // sets the "colors" variable by checking if the list is a true list (array) and applying color splitting/trimming
+            KFcolors = Array.isArray(colorList) ? colorList : colorList.split(',').map(color => color.trim());
+        }
     }
 
-    // clears the current effect
-    border.classList.remove("gradient", "solid");
-    // clears the current animation
-    border.style.animation = "";
-    
-    // takes the previous border gradient style
-    const previousStyle = document.querySelector(`#keyframes-gradientBorder`)
-    // if there's already a style
-    if (previousStyle) {
-        // removes it
-        previousStyle.remove();
+    // stores the first color as "firstColor" (very creative)
+    const firstColor = KFcolors[0]
+
+    // checks that the color container isn't a string (so when it's not "default")
+    if (typeof KFcolors !== "string") {
+        // if there's more than 1 color in the color variable 
+        if (KFcolors.length > 1) {
+            // adds the first color into the list (now has 2x the first color), to smooth the transition between start and end
+            KFcolors.push(firstColor)
+        }
     }
+
+    // gets the passed element and stores as local constant (kind of useless for now, further element support OTW :) 
+    const passedElement = document.getElementById(elementName)
+
+    // sets some variables to none first so they can be set below
+    passedElement.style.backgroundImage = "none";
+    passedElement.style.backgroundColor = "none";
 
     // checks how many colors were given
-    if (colors === "default") {
+    if (KFcolors === "default") {
         // user inform
-        console.log("Found no colors, setting border to default color")
-        // sets the background to the default color
-        document.documentElement.style.setProperty("--borderColor", defaultBorderColor);
-        // sets the solid style
-        border.classList.add("solid");
+        console.log("Found no colors, setting border to fallback color");
+        // sets a stand-in duration (OBS wants this)
+        passedElement.style.animationDuration = "60s";
+        // applies the animation-less animation name/keyframes
+        passedElement.style.animationName = "gradientSpinnerStop";
+        // sets the color to fallback
+        passedElement.style.backgroundColor = "#ffffff";
     }
     // if only one color was given (config default, config goes straight here)
-    else if (colors.length === 1) {
+    else if (KFcolors.length === 1) {
         // user inform
-        console.log("Found 1 color, setting border to color")
-        // sets the background to the default color
-        document.documentElement.style.setProperty("--borderColor", colors[0]);
-        // sets the solid style
-        border.classList.add("solid");
+        console.log("Found 1 color - setting border to color");
+        // sets a stand-in duration (OBS wants this)
+        passedElement.style.animationDuration = "60s";
+        // applies the animation-less animation name/keyframes
+        passedElement.style.animationName = "gradientSpinnerStop";
+        // sets the colors variable to match the only color
+        passedElement.style.backgroundColor = `${firstColor}`;
     }
     // if two or more colors were given
     else {
         // user inform
-        console.log("Found", colors.length , "colors, setting border to gradient with given colors")
-
-        // defines the gradient movement and colors in a variable
-        let gradientAnimation = `linear-gradient(45deg, ${colors.join(", ")})`
-        // creates a new style element for the keyframes to be injected into
-        let styleElement = document.createElement("style");
-
-        // sets the keyframes from the arguments into the style element
-        styleElement.innerHTML = keyframes;
-
-        // appends the style element into the document head
-        document.head.appendChild(styleElement);
-        // sets the gradient animation variable (uses the predetermined animation and the name from the WS builder)
-        document.documentElement.style.setProperty("--gradient-animation", "gradientBorder");
-        // sets the variable to match the new definition with the previously made variable
-        document.documentElement.style.setProperty("--borderColor", gradientAnimation);
-        // adds the gradient to the "class list" (enables gradient animation with set colors)
-        border.classList.add("gradient");
+        console.log("Found", KFcolors.length , "colors - setting border to gradient with given colors");
+        // sets the time variable dynamically (10s / color)
+        passedElement.style.animationDuration = (`${KFcolors.length * 10}` + "s");
+        // sets the animation name
+        passedElement.style.animationName = "gradientSpinnerSpin";
+        // sets the colors variable to match
+        passedElement.style.backgroundImage = `conic-gradient(${KFcolors.join(", ")})`;
     }
 }
 

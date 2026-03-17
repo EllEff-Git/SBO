@@ -15,7 +15,7 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.15.0552"
+SBO_ver = "v0.3.17.1105"
 """The SBO program version (y.m.dd.hhmm)"""
 
 
@@ -91,15 +91,16 @@ enableBot = Config.getboolean("Twitch-Bot", "enable_Twitch_Bot")
 """Whether to enable the Twitch Bot PTP connection  (boolean)"""
 runBot = Config.getboolean("Twitch-Bot", "sbo_Runs_Bot")
 """Whether to automatically start the bot program (boolean)"""
-autoRestart = Config.getboolean("Function", "auto_Restart", fallback=False)
-"""Whether to restart the application on unexpected quit"""
 webHostPort = (Config.getint("Function", "http_Port", fallback=6666) + 1)
 """The port to use for the Bot PTP connection (http_Port + 1, int)"""
 webClientPort = (Config.getint("Function", "http_Port", fallback=6666) + 2)
 """The port to use for the WS PTP connection (http_Port + 2, int)"""
 
+
 if runBot:
     # if SBO should run the bot
+    print(f"{Time()}[SBOT]: SBO Bot is enabled")
+    # user inform
     enableBot = True
     # also enables the bot connection
 
@@ -113,7 +114,7 @@ if enableBot:
     # sets the address and port
     webHost.listen()
     # creates a websocket listener connection on localhost
-    print(f"{Time()}[PTP]: Started inter-python connection")
+    print(f"{Time()}[PTP]: Started inter-python connection for SBOT")
     # debug print
 
 sp_client_ID = Config.get("Required", "spotify_Client_ID")
@@ -398,7 +399,7 @@ class SpotifyQueue:
                 # if it fails to acquire a Spotify playback package
                 if isinstance(error, requests.exceptions.ConnectionError):
                     # if the error is a connection error (token expired)
-                    print(f"\n{Time()}[spAPI]: Refreshing Spotify token")
+                    print(f"\n{Time()}[spAPI]: Refreshing Spotify token {error}")
                     # doesn't sleep because this is a token error and should get fixed nearly instantly
                     # expected to print just about every 3600 seconds (1h)
                     tokenRefresh = True
@@ -437,32 +438,20 @@ class SpotifyQueue:
 
                 if attempt == 2 and not internalError:
                     # if it's the last attempt (range(3) = 0,1,2) and it fails
-                    print(f"{Time()}[CRITICAL]: All attempts to reconnect to Spotify API failed due to {error}\n\nPlease restart SBO. Exiting...")
-                    time.sleep(300)
-                    # waits 5 minutes
-                    if autoRestart:
-                        # if auto-restart is enabled
-                        restarter()
-                        # runs the restarter
-                    else:
-                        time.sleep(300)
-                        # waits an additional 5 minutes
-                        raise SystemExit
-                        # then exits
+                    print(f"{Time()}[CRITICAL]: All attempts to reconnect to Spotify API failed due to {error}\n")
+                    # prints user inform
+                    time.sleep(600)
+                    # waits 10 minutes
+                    raise SystemExit
+                    # then exits
                 elif attempt == 2 and internalError:
                     # if it's the last attempt and fails due to internal error
-                    print(f"{Time()}[CRITICAL]: All attempts to reconnect to Spotify API failed due to Spotify's internal error.\n\nPlease restart SBO. Exiting...")
-                    time.sleep(300)
-                    # waits 5 minutes
-                    if autoRestart:
-                        # if auto-restart is enabled
-                        restarter()
-                        # runs the restarter
-                    else:
-                        time.sleep(300)
-                        # waits an additional 5 minutes
-                        raise SystemExit
-                        # then exits
+                    print(f"{Time()}[CRITICAL]: All attempts to reconnect to Spotify API failed due to Spotify's internal error.\n")
+                    # prints user inform
+                    time.sleep(600)
+                    # waits 10 minutes
+                    raise SystemExit
+                    # then exits
 
             time.sleep(3)
             # waits 3 seconds to give it some time between tries
@@ -986,50 +975,50 @@ def overlayColor(color: str, client_socket=None):
 
 
 
-### Self-Restart ###
-
-
-
-def restarter():
-    """Function to restart this program"""
-    sbo = sys.executable
-    # grabs this executable
-    sboPy = sys.argv[0]
-    # grabs this script name
-    subprocess.Popen([sbo, sboPy])
-    # restarts itself as a subprocess
-    sys.exit()
-    # exits the current instance
-
-
-
 ### SBO WebSocket ###
 
 
 
 def runSBOws() -> subprocess.Popen:
     """Function to start the SBO-WS.exe"""
-    with subprocess.Popen([sbowsPath], cwd=sbowsDir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as sbowsPrint:
+    sboWS = subprocess.Popen([sbowsPath], cwd=sbowsDir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         # opens the SBO-WS.exe file and reads its output
-        for line in sbowsPrint.stdout:
+
+    def sboWSprinter():
+        """Function to print the output of SBO-WS"""
+        for line in sboWS.stdout:
             # every time a new line is sent
             print(f"{Time()}[WS]: {line.rstrip()}")
             # prints the line (clears right side)
 
+    threading.Thread(target=sboWSprinter, daemon=True).start()
+    # starts the printer function
+
+    return sboWS
+    # returns the websocket
 
 
-### Twitch Bot ###
+
+### SBO Twitch Bot ###
 
 
 
 def runSBOBot() -> subprocess.Popen:
     """Function to start the SBO Twitch Bot"""
-    with subprocess.Popen([sboBotPath], cwd=sboBotDir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as sboBotPrint:
+    sboBot = subprocess.Popen([sboBotPath], cwd=sboBotDir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         # opens the SBO-Bot.exe file and reads its output 
-        for line in sboBotPrint.stdout:
+
+    def sboBotPrinter():
+        for line in sboBot.stdout:
             # every time a new line is sent
             print(f"{Time()}[SBOT]: {line.rstrip()}")
             # prints the line (clears right side)
+
+    threading.Thread(target=sboBotPrinter, daemon=True).start()
+    # starts the printer function
+
+    return sboBot
+    # returns the bot
 
 
 
@@ -1041,7 +1030,7 @@ def song():
     """The function that handles all song data gathering and parsing, as well as pushing to the websocket via text"""
     global currentInfo, trackCounter, oldCount, songColorHex, textColorHex, barColorHex, overlayColorHex
     global lastSong, lastArtist, lastPlaylistURL, updateProgress, csPlaylistID
-    # pulls some global variables to local
+    # pulls "some" global variables to local
 
     while True:
 
@@ -1441,19 +1430,19 @@ def looper():
 
 spotifyQueueInstance = SpotifyQueue(main, spotifyLock)
 # creates the Spotify queue instance
-spotifyQueueRunner = threading.Thread(target = spotifyQueueInstance.spotifyAPIPrepper)
+spotifyQueueRunner = threading.Thread(target = spotifyQueueInstance.spotifyAPIPrepper, name="Spotify API Process")
 # creates the Spotify queue thread for APIPrepper
 spotifyQueueRunner.start()
 # starts the spotifyQueue thread
 
 
-songThread = threading.Thread(target = song)
+songThread = threading.Thread(target = song, name="Spotify Data Constructor")
 # creates the song thread
 songThread.start()
 # starts the song thread to get updated info
 
 
-sbowsThread = threading.Thread(target = runSBOws)
+sbowsThread = threading.Thread(target = runSBOws, name="SBO-WebSocket Process")
 # creates a thread for the SBO-WS program to run in - this way it won't stop the main process
 sbowsThread.start()
 # starts the SBO-WS thread
@@ -1461,7 +1450,7 @@ sbowsThread.start()
 
 if enableBot:
     # if the config option to enable the bot is on (enabled by bot runner if not already)
-    ptpThread = threading.Thread(target = webHostListener)
+    ptpThread = threading.Thread(target = webHostListener, name="SBO PTP Connection")
     # creates a thread for the webhost listener
     ptpThread.start()
     # starts the ptp thread
@@ -1469,7 +1458,7 @@ if enableBot:
 
 if runBot:
     # if the config option to have SBO run the bot program is enabled
-    botThread = threading.Thread(target = runSBOBot)
+    botThread = threading.Thread(target = runSBOBot, name="SBO Twitch Bot Process")
     # creates a thread for the SBO-Bot program to run in - this way it won't stop the main process
     botThread.start()
     # starts the SBO-Bot thread
