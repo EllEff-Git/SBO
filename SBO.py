@@ -15,7 +15,7 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.24.0943"
+SBO_ver = "v0.3.24.1012"
 """The SBO program version (y.m.dd.hhmm)"""
 
 
@@ -399,7 +399,7 @@ class SpotifyQueue:
                 # if it fails to acquire a Spotify playback package
                 if isinstance(error, requests.exceptions.ConnectionError):
                     # if the error is a connection error (token expired)
-                    print(f"\n{Time()}[spAPI]: Refreshing Spotify token {error}")
+                    print(f"\n{Time()}[spAPI]: Refreshing Spotify token")
                     # doesn't sleep because this is a token error and should get fixed nearly instantly
                     # expected to print just about every 3600 seconds (1h)
                     tokenRefresh = True
