@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 
-SBO_Bot_ver = "v0.3.17.1227"
+SBO_Bot_ver = "v0.3.24.1012"
 """The SBO Bot version (y.m.dd.hhmm)"""
 
 
@@ -945,7 +945,7 @@ class CommandComponent(commands.Component):
                     color = color.strip()
                     # ensures no empty space makes it through
 
-                    dataPasser("Overlay Color", color)
+                    dataPasser("Song Color", color)
                     # calls the dataPasser function with the color
 
                     if color.lower() == "clear":
@@ -986,7 +986,7 @@ class CommandComponent(commands.Component):
                     color = color.strip()
                     # ensures no empty space makes it through
 
-                    dataPasser("Overlay Color", color)
+                    dataPasser("Text Color", color)
                     # calls the dataPasser function with the color
 
                     if color.lower() == "clear":
@@ -1027,7 +1027,7 @@ class CommandComponent(commands.Component):
                     color = color.strip()
                     # ensures no empty space makes it through
 
-                    dataPasser("Overlay Color", color)
+                    dataPasser("Bar Color", color)
                     # calls the dataPasser function with the color
 
                     if color.lower() == "clear":

@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.3.17.0721</title>
+<title>Spotify Overlay v0.3.24.0943</title>
 
 <script>
 
 
-// initialises last track, player timeout start and playerIntervalID as null on start
-let lastTrackID = null, startTime = null, playerIntervalID = null;
+// initialises last track, player timeout start and playerIntervalID as null on start (+ a reconnect check)
+let lastTrackID = null, startTime = null, playerIntervalID = null, reconnectFail = null;
 
 // timer/progress bar variables
 let currentProgress = 0, lastPercentage = 0;
@@ -22,10 +22,13 @@ let maxInfoSize = 0, playerTimeout = 0, outerX = 0, outerY = 0;
 let isPaused = false, isHidden = false;
 
 // initialises global variables (websocket + all the elements)
-let ws, player, cover, fakeBorder, background, titleElement, artistElement, albumElement, bar, timer;
+let ws, player, cover, fakeBorder, background, titleElement, artistElement, albumElement, bar, timer, backgroundCover;
 
 // initialises global color variables
 let defaultTitleColor, defaultSupportColors, defaultBorderColor, defaultProgressColor;
+
+// initialises global color variable lengths
+let dTClength, dSClength, dBClength, dPClength;
 
 // initialises widths for player 
 let playerWidthRaw = 0, playerHeightRaw = 0;
@@ -40,6 +43,7 @@ document.addEventListener("DOMContentLoaded", () => {
     cover = document.getElementById("cover");
     fakeBorder = document.getElementById("fakeBorder");
     background = document.getElementById("background");
+    backgroundCover = document.getElementById("backgroundCover");
     titleElement = document.getElementById("title");
     artistElement = document.getElementById("artist");
     albumElement = document.getElementById("album");
@@ -68,27 +72,90 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // sets all the variables that the elements use based on loaded config.json file
         
-        // stores the config colors in these "default variables"
+        // stores the config colors in these "default variables" (as strings)
         defaultTitleColor = Config.titleColor;
         defaultSupportColors = Config.supportColors;
         defaultProgressColor = Config.progressBarColor;
         defaultBorderColor = Config.borderColor;
 
-        const elementID = "spinner";
+        // splits the color variables and stores their lengths (used later for checks when clearing colors)
+        if (defaultTitleColor.includes(",")) {
+            // splits the color string
+            const dTCtemp = defaultTitleColor.split(",");
+            // stores the first color
+            const firstColor = dTCtemp[0];
+            // stores the title color with the first color added to the end (helps smooth transitions)
+            defaultTitleColor = `${defaultTitleColor}, ${firstColor}`;
+            // stores the length in the global variable
+            dTClength = dTCtemp.length + 1;
+        }
+        // no comma = single color
+        else {
+            dTClength = 1
+        }
+
+        // splits the color variables and stores their lengths (used later for checks when clearing colors)
+        if (defaultSupportColors.includes(",")) {
+            // splits the color string
+            const dSCtemp = defaultSupportColors.split(",");
+            // stores the first color
+            const firstColor = dSCtemp[0];
+            // stores the title color with the first color added to the end (helps smooth transitions)
+            defaultSupportColors = `${defaultSupportColors}, ${firstColor}`;
+            // stores the length in the global variable
+            dSClength = dSCtemp.length + 1;
+        }
+        // no comma = single color
+        else {
+            dSClength = 1
+        }
+
+        // splits the color variables and stores their lengths (used later for checks when clearing colors)
+        if (defaultProgressColor.includes(",")) {
+            // splits the color string
+            const dPCtemp = defaultProgressColor.split(",");
+            // stores the first color
+            const firstColor = dPCtemp[0];
+            // stores the title color with the first color added to the end (helps smooth transitions)
+            defaultProgressColor = `${defaultProgressColor}, ${firstColor}`;
+            // stores the length in the global variable
+            dPClength = dPCtemp.length + 1;
+        }
+        // no comma = single color
+        else {
+            dPClength = 1
+        }
+
+        // splits the color variables and stores their lengths (used later for checks when clearing colors)
+        if (defaultBorderColor.includes(",")) {
+            // splits the color string
+            const dBCtemp = defaultBorderColor.split(",");
+            // stores the first color
+            const firstColor = dBCtemp[0];
+            // stores the title color with the first color added to the end (helps smooth transitions)
+            defaultBorderColor = `${defaultBorderColor}, ${firstColor}`;
+            // stores the length in the global variable
+            dBClength = dBCtemp.length + 1;
+        }
+        // no comma = single color
+        else {
+            dBClength = 1
+        }
 
         // calls the gradientCheck to set the color variables/border
-        gradientCheck(defaultBorderColor, elementID);
+        gradientCheck(defaultTitleColor, "title");
+        gradientCheck(defaultSupportColors, "artist");
+        gradientCheck(defaultSupportColors, "album");
+        gradientCheck(defaultProgressColor, "bar");
+        gradientCheck(defaultBorderColor, "spinner");
         
         // title styling
         document.documentElement.style.setProperty("--titleStyle", Config.titleStyle);
         document.documentElement.style.setProperty("--titleWeight", Config.titleWeight);
-        document.documentElement.style.setProperty("--titleColor", defaultTitleColor);
         // album, artist, timer styling
         document.documentElement.style.setProperty("--supportStyles", Config.supportStyles);
         document.documentElement.style.setProperty("--supportWeights", Config.supportWeights);
-        document.documentElement.style.setProperty("--supportColors", defaultSupportColors);
         // progress bar style
-        document.documentElement.style.setProperty("--pbcNorm", defaultProgressColor);
         document.documentElement.style.setProperty("--pbcPause", Config.progressBarPaused);
 
         // gets the timeout duration to hide player
@@ -101,28 +168,51 @@ document.addEventListener("DOMContentLoaded", () => {
         // defines the max size for the info fields (text, progress container (bar + timer))
         document.documentElement.style.setProperty("--maxInfoWidth", maxInfoSize + "px");
 
-        // saves the http port as a constant
+        // saves the http port as a constant (config-set)
         const wsPort = Config.httpPort;
-        // creates a websocket to that port
-        ws = new WebSocket(`ws://127.0.0.1:${wsPort}/ws`);
+        // stores the connection type (protocol) as a constant
+        const protocol = window.location.protocol === "https" ? "wss" : "ws";
+        // stores the host as a constant (0.0.0.0, localhost, local IP (192.168...))
+        const host = window.location.hostname;
+
+        // creates a websocket at address with set port
+        ws = new WebSocket(`${protocol}://${host}:${wsPort}/ws`);
         
         // debug/console printing (in browser)
         ws.onopen = () => {
+            // logs connection to console
             console.log("Websocket connected!");
+            // sets the reconnect status to null
+            reconnectFail = null;
         };
         // in case of an error with the websocket
         ws.onerror = (err) => {
+            // logs error to console
             console.error("Websocket error: ", err);
         };
         // when the connection ends/disconnects
         ws.onclose = (evt) => {
-            // send a warning in console
-            console.warn("Websocket closed: ", evt);
-            // wait 5 seconds (5000 ms), then retry
-            setTimeout(() => {
-                console.log("Attempting reconnect");
-                ws = new WebSocket(`ws://127.0.0.1:${wsPort}/ws`);
-                }, 10000);
+            // checks if there's already been a reconnect attempt
+            if (reconnectFail === null) {
+                // send a warning in console
+                console.warn("Websocket closed: ", evt);
+                // informs of a refresh (reload)
+                console.log("Reconnecting in 10s...");
+                // wait 10 seconds (1000 ms), then tries to reconnect
+                setTimeout(() => {
+                    // logs to console that it's about to refresh
+                    console.log("Reconnecting...");
+                    // sets the reconnectFail to not null (so it doesn't refresh infinitely)
+                    reconnectFail = "notNull";
+                    // reloads the page
+                    window.location.reload();
+                    }, 10000);
+            }
+            // if there already has been a reconnect attempt
+            else {
+                // logs to console the failure
+                console.log("Reconnect failed! Ensure SBO-WS is running and refresh manually!");
+            }
         };
         // when it gets a new "message" (payload) from python
         ws.onmessage = (event) => {
@@ -136,7 +226,6 @@ document.addEventListener("DOMContentLoaded", () => {
             // "data.type" (given by SBO-WS in payload) determines what updates are performed:
             // "full" does both updates below, "track" runs player-related changes and timestamps, "color" only colors;
             // "progress" only happens if SBO spots the real progress and expected progress doesn't match (within a set threshold)
-            // "keyframes" includes nothing, but tells the JS to load the new keyframes from keyframes.txt
             // this allows the Twitch chat commands to not re-run the entire program just to change colors
 
             // if the set data type is "track" or "full" (meaning song has changed)
@@ -188,8 +277,14 @@ document.addEventListener("DOMContentLoaded", () => {
                         titleElement.textContent = data.title || "";
                         artistElement.textContent = data.artist || "";
                         albumElement.textContent = data.album || "";
-                        // grabs the image, link -> picture
+
+                        // grabs the album image link, turns into cover picture
                         cover.src = data.cover;
+
+                        // the background image - swap a commented-out line with the active one to disable/set custom image
+                        backgroundCover.src = data.cover; // by default, uses the same album cover as the background
+                        //backgroundCover.src = "none"; // "none" makes sure there's no image loaded (otherwise will have a symbol in the corner)
+                        //backgroundCover.src = "https://i.imgur.com/veryRealPicture.PNG"; // any direct link works (that's how the Spotify links work, too)
 
                         // calls the length-checking function to get the size of the title field
                         checkTextSize(titleElement);
@@ -222,19 +317,24 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             // if the data type is "color" (meaning a chat command -> color change) or "full"
             if (data.type === "color" || data.type === "full") {
-                // stores the spinner element string
-                const elementID = "spinner";
-                // if there's a borderColor (config)
+                // if there's a borderColor (overlay border)
                 if (data.borderColor) {
-                    // calls gradientCheck, passing the borderColor from data and the element ID to be passed
-                    gradientCheck(data.borderColor, elementID);
+                    // calls gradientCheck, passing the borderColor from data and the element name
+                    gradientCheck(data.borderColor, "spinner");
                 }
-                else if (data.colors) {
-                    // sends the colors from data instead
-                    gradientCheck(data.colors, elementID)
+                // if there's a progressColor (progress bar)
+                else if (data.progressColor) {
+                    gradientCheck(data.progressColor, "bar");
                 }
-                // calls the function to change the colors
-                colorChanger(data);
+                // if there's a supportColor (artist/album text)
+                else if (data.supportColor) {
+                    gradientCheck(data.supportColor, "artist");
+                    gradientCheck(data.supportColor, "album");
+                }
+                // if there's a titleColor (song text)
+                else if (data.titleColor) {
+                    gradientCheck(data.titleColor, "title");
+                }
             }
             // if the data type is "progress" (meaning SBO flagged a discrepency in the song progress, but nothing else changed)
             if (data.type === "progress") {
@@ -276,6 +376,8 @@ document.addEventListener("DOMContentLoaded", () => {
 <div id="player">
     <!-- the background element, sits below player to add a background (image, color, opaque...) -->
     <div id="background"></div>
+    <!-- the background's image (if enabled)-->
+    <img id="backgroundCover" src=""></img>
     <!-- the image/album cover -->
     <img id="cover" src="">
     <!-- the field container (text fields, progress bar, timer)-->
@@ -311,10 +413,10 @@ document.addEventListener("DOMContentLoaded", () => {
             <!-- the white rectangle is the area that will be visible (should match the fake border's size)
                 x,y are position, rx,ry are corner rounding numbers / the white's x and y should be 0, so it's aligned with the fakeBorder
                 black's x and 5 should match the border thickness you're aiming for (5px borders = 5,5) -->
-            <rect x="0" y="0" width="454px" height="124px" rx="18" ry="18" fill="white"/>
+            <rect x="0" y="0" width="454px" height="124px" rx="18" ry="18" fill="white"></rect>
             <!-- the black rectangle is the player's area, which will be cut out from the fake border box to make it transparent (so player can be seen)
                 as such, the sizes should match player *including* its padding (currently 12px, so 420 + 12 + 12 = 444px) for both width and height -->
-            <rect x="5" y="5" width="444px" height="114px" rx="15" ry="15" fill="black"/>
+            <rect x="5" y="5" width="444px" height="114px" rx="15" ry="15" fill="black"></rect>
         </mask>
     </defs>
 </svg>
@@ -342,16 +444,42 @@ body {
     /* position should be absolute, to ensure it doesn't get squished by other elements in player */
     position: absolute;
     /* 0 in everything ensures it follows the player settings */
-    top: 0; bottom: 0; left: 0; right: 0;
-    /* color and opacity of the background */
-    background-color: rgba(1, 1, 1, 0.8);
+    top: 0; bottom: 0; left: 0px; right: 0;
+    /* color and opacity of the background 
+        this controls how the background looks, if you want a pink hue, make it pink, blue -> blue, etc 
+        the last number is opacity, 0-1, 0 being fully transparent, 1 being fully opaque */
+    background-color: rgba(1, 1, 1, 0.75);
     /* how rounded the player element's corners should be (should be 1px less than fakeBorder, to prevent gaps) */
     border-radius: 14px;
     /* matches the player size + the padding */
-    width: 444px;
-    height: 114px;
+    width: 448px;
+    height: 118px;
     /* z-index of background should be the lowest out of all*/
     z-index: 1;
+}
+
+/* puts the album cover in the background */
+#backgroundCover {
+    /* sets the position*/
+    position: absolute;
+    top: 8; left: 0;
+    /* matches the player size + the padding */
+    width: 448px;
+    height: 118px;
+    /* makes sure the corners don't show up */
+    border-radius: 15px;
+    /* ensures there's no extra color*/
+    background-color: none;
+    /* how blurry the background should be (higher pixel # is more blurry) */
+    filter: blur(5px);
+    /* how the picture is formatted - cover sets it so it fits width-wise and the height is cut
+        fill stretches it so both dimensions are filled 
+        contain makes it fit height-wise (only appears in the middle) */
+    object-fit: cover;
+    /* how the picture is positioned - accepts things like "top right" or "bottom" */
+    object-position: center;
+    /* how see-through the picture is */
+    opacity: 0.75;
 }
 
 /* the player, aka the full base for all elements */
@@ -359,7 +487,7 @@ body {
     /* positioning of the player */
     position: absolute;
     /* how far from the top-left corner the player should be */
-    top: 10px; bottom: 0px; left: 10px; right: 0px;
+    top: 8px; bottom: 0px; left: 8px; right: 0px;
     display: flex;
     align-items: center;
     /* space between the picture and other elements */
@@ -371,10 +499,11 @@ body {
     /* how much space there is on the outside of the picture/text/timer elements */
     padding: 12px;
     /* player sizes */
-    width: 420px;
-    height: 90px;
+    width: 424px;
+    height: 94px;
     /* the depth of the player (must be higher than background, equal or lower than elements) */
     z-index: 2;
+    overflow: hidden;
 }
 
 /* the "border" around the player - it's really just a box with an SVG cutout applied */
@@ -426,7 +555,6 @@ body {
     animation-iteration-count: infinite;
     /* sets the "image" to a cone gradient (starts at middle, expands towards the edges) with the variable colors */
     background-image: conic-gradient(#ffffff, #424242);
-    /* all the same stuff, but for webkit */
 }
 
 /* the keyframes to use when the gradient is applied (>= 2 colors) */
@@ -471,6 +599,8 @@ body {
     flex-shrink: 0;
     /* z-index of 3 is higher than the player itself */
     z-index: 3;
+    /* a border around the album cover, if desired */
+    /* border: 1px solid white; */
 }
 
 /* main info, all player fields inherit this (text, bar, timer) */
@@ -486,7 +616,7 @@ body {
     /* inherits size from player and cover */
     width: auto;
     max-width: none;
-    text-shadow: 1px 2px #000000;
+    height: auto;
 }
 
 /* the text fields inherit these */
@@ -502,42 +632,43 @@ body {
 /* all text field-wide configs */
 .title, .artist, .album {
     position: relative;
-    /* lets the text overflow */
+    /* lets the text overflow, but clips the overflowed portion */
     text-overflow: clip;
     /* ensures they always have some space */
     min-width: 0;
     /* stops the fields from submitting to other size restrictions */
     flex-shrink: 0;
-    /* the size of the text (overriden by title) */
+    /* the size of the text (overridden by title) */
     font-size: 14px; 
-    /* the text styling (overriden by title) */
+    /* the text styling (overridden by title) */
     font-weight: var(--supportWeights);
     font-style: var(--supportStyles);
-    color: var(--supportColors, #ffffff);
+    /* adds borders around the text - looks better in browser capture, comment out/set to 0px if it interferes 
+        basically just helps the text not "shimmer" when it's scrolling */
+    -webkit-text-stroke: 0.5px black;
+    /* ensures the text itself is transparent, allowing the "background" from gradientCheck to be seen through */
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    /* clips the text out of the background */
+    background-clip: text;
 }
 
 /* the name/title field of the song */
 .title {
+    /* lets the title sit slightly above where the default is */
+    top: -3px;
     /* the title styling */
     font-weight: var(--titleWeight);
     font-style: var(--titleStyle);
-    color: var(--titleColor, #ffffff);
     /* the size of the title text */
-    font-size: 18px;
+    font-size: 19px;
     /* makes the text scale to fit without restrictions */
     width: auto;
     max-width: none;
 }
 
-/* the artist field */
-.artist {
-    /* makes the text scale to fit without restrictions */
-    width: auto;
-    max-width: none;
-}
-
-/* the album field */
-.album {
+/* artist and album fields */
+.artist .album {
     /* makes the text scale to fit without restrictions */
     width: auto;
     max-width: none;
@@ -561,28 +692,29 @@ body {
     flex: 1;
     /* sets minimum width */
     min-width: 50px;
-    /* how tall the player should be */
+    /* how tall the player progress bar should be */
     height: 4px;
     /* the color of the empty part of the bar */
     background: #949494;
-    margin-top: 6px;
+    /* places the progress bar slightly more below the text fields than the timer */
+    margin-top: 3px;
     /* how rounded the corners are */
     border-radius: 2px;
     /* border style around the progress bar (black gives a good contrast with this background setting */
-    border: 1px, solid, #000000;
+    border: 1.5px, solid, #000000;
     overflow: hidden;
     position: relative;
 }
 
-/* progress bar (filled) */
+/* progress bar (fill) */
 #bar {
     height: 100%;
-    /* the color of the full part of the bar */
-    background: var(--pbcNorm, #1ED760);
+    /* sets a background image */
+    background: linear-gradient(22.5deg, #1ED760);
     width: 0%;
     /* adds a tiny transition to smoothe the bar updates */
-    transition: width 0.3s linear;
-    /* sets the position */
+    transition: width 0.4s linear;
+    /* sets the position inside the progress bar */
     position: absolute;
     top: 0;
     left: 0;
@@ -598,12 +730,13 @@ body {
 /* the timer/duration on the right */
 #timer {
     /* sets a font that's just a smidge smaller than album and artist */
-    font-size: 13px;
+    font-size: 11px;
     white-space: nowrap;
     opacity: 0.8;
     /* color and style are matched with the other support fields (album, artist) */
-    color: var(--supportColors, #ffffff);
-    font-style: var(--supportStyles);
+    color: #ffffff;
+    font-style: italic;
+    font-weight: bold;
 }
 
 /* each individual text field's scroll rules
@@ -707,7 +840,8 @@ function checkTextSize(element) {
     const elementDelta = (elementWidth - maxInfoSize);
 
     // stores the % the element should move (delta/width = ratio * 100 = %, and since it should move L -> R, it's negative)
-    const shiftAmount = ((elementDelta / elementWidth) * (-100));
+    // if the text fields use italic font style, the multiplier should be slightly larger, to help offset for the slanted text
+    const shiftAmount = ((elementDelta / elementWidth) * (-107));
 
     // checks the width of the passed element against the "parent element" (the element that stores the passed element)
     // for all the elements currently contained, it's the 
@@ -801,25 +935,6 @@ function progressAnimation() {
     requestAnimationFrame(progressAnimation);
 }
 
-// function to change the color variables based on chat commands (chat -> Bot py -> SBO py -> SBO-WS py -> here)
-function colorChanger(data) {
-    // sets the property for title text color variable (based on what the data package contains - needs to be set, can't be "Clear", otherwise sets to default)
-    document.documentElement.style.setProperty(
-        "--titleColor",
-        data.titleColor && data.titleColor !== "Clear" ? data.titleColor : defaultTitleColor
-    );
-    // sets the property for support text color variable (based on what the data package contains - needs to be set, can't be "Clear", otherwise sets to default)
-    document.documentElement.style.setProperty(
-        "--supportColors",
-        data.supportColor && data.supportColor !== "Clear" ? data.supportColor : defaultSupportColors
-    );
-    // sets the property for progress bar color variable (based on what the data package contains - needs to be set, can't be "Clear", otherwise sets to default)
-    document.documentElement.style.setProperty(
-        "--pbcNorm",
-        data.progressColor && data.progressColor !== "Clear" ? data.progressColor : defaultProgressColor
-    );
-}
-
 // function to check if the player should be hidden 
 function playerHider() {
     // if the player timeout config is set to 0 (means disabled)
@@ -846,7 +961,7 @@ function playerHider() {
         fakeBorder.style.opacity = 0;
         // sets the flag to true so it can be detected when playback continues
         isHidden = true;
-        // stops the loop (clears the 1s checking)
+        // stops the loop (clears the 1x/1s interval for running the playerHider)
         clearInterval(playerIntervalID);
     }
 }
@@ -865,8 +980,8 @@ function gradientCheck(colorList, elementName) {
         else {
             // directly trims the "list" and just uses the one single color as the list
             KFcolors = colorList.trim() === "" ? [] : [colorList.trim()];
-            // if the "color" is "Clear" (command to set back to default)
-            if (KFcolors[0] === "Clear") {
+            // if the "color" is "Clear" or "clear" (command to set back to default)
+            if (KFcolors[0] === "Clear" || KFcolors[0] === "clear") {
                 // sets the color string to default so it resets the color
                 KFcolors = "default";
             }
@@ -910,46 +1025,119 @@ function gradientCheck(colorList, elementName) {
         }
     }
 
-    // gets the passed element and stores as local constant (kind of useless for now, further element support OTW :) 
+    // gets the passed element and stores as local constant
     const passedElement = document.getElementById(elementName)
 
-    // sets some variables to none first so they can be set below
-    passedElement.style.backgroundImage = "none";
-    passedElement.style.backgroundColor = "none";
+    // if the parameter was "spinner" (border element)
+    if (elementName === "spinner") {
+        // sets some variables to none first so they can be set below
+        passedElement.style.backgroundImage = "none";
+        passedElement.style.backgroundColor = "none";
 
-    // checks how many colors were given
-    if (KFcolors === "default") {
-        // user inform
-        console.log("Found no colors, setting border to fallback color");
-        // sets a stand-in duration (OBS wants this)
-        passedElement.style.animationDuration = "60s";
-        // applies the animation-less animation name/keyframes
-        passedElement.style.animationName = "gradientSpinnerStop";
-        // sets the color to fallback
-        passedElement.style.backgroundColor = "#ffffff";
-    }
-    // if only one color was given (config default, config goes straight here)
-    else if (KFcolors.length === 1) {
-        // user inform
-        console.log("Found 1 color - setting border to color");
-        // sets a stand-in duration (OBS wants this)
-        passedElement.style.animationDuration = "60s";
-        // applies the animation-less animation name/keyframes
-        passedElement.style.animationName = "gradientSpinnerStop";
-        // sets the colors variable to match the only color
-        passedElement.style.backgroundColor = `${firstColor}`;
-    }
-    // if two or more colors were given
+        // if the color has been called to reset (or none were passed)
+        if (KFcolors === "default") {
+            // user inform
+            console.log("Found no colors, clearing border");
+            // sets a stand-in duration (OBS wants this)
+            passedElement.style.animationDuration = "60s";
+            // applies the animation-less animation name/keyframes
+            passedElement.style.animationName = "gradientSpinnerStop";
+            // sets the color to fallback
+            if (dBClength > 1) {
+                passedElement.style.backgroundImage = `conic-gradient(${defaultBorderColor})`;
+            }
+            else {
+                passedElement.style.backgroundColor = "#ffffff";
+            }
+        }
+        // if only one color was given (config default, config goes straight here)
+        else if (KFcolors.length === 1) {
+            // user inform
+            console.log("Found 1 color - setting border to color");
+            // sets a stand-in duration (OBS wants this)
+            passedElement.style.animationDuration = "60s";
+            // applies the animation-less animation name/keyframes
+            passedElement.style.animationName = "gradientSpinnerStop";
+            // sets the colors variable to match the only color
+            passedElement.style.backgroundColor = `${firstColor}`;
+        }
+        // if two or more colors were given
+        else {
+            // user inform
+            console.log("Found", KFcolors.length , "colors - setting border to gradient with given colors");
+            // sets the time variable dynamically (8s / color)
+            passedElement.style.animationDuration = (`${KFcolors.length * 8}` + "s");
+            // sets the animation name
+            passedElement.style.animationName = "gradientSpinnerSpin";
+            // sets the colors variable to match
+            passedElement.style.backgroundImage = `conic-gradient(${KFcolors.join(", ")})`;
+        }
+    } // closes spinner check
+
+    // if the element wasn't spinner (means it was; title, artist, album or progress bar)
     else {
-        // user inform
-        console.log("Found", KFcolors.length , "colors - setting border to gradient with given colors");
-        // sets the time variable dynamically (10s / color)
-        passedElement.style.animationDuration = (`${KFcolors.length * 10}` + "s");
-        // sets the animation name
-        passedElement.style.animationName = "gradientSpinnerSpin";
-        // sets the colors variable to match
-        passedElement.style.backgroundImage = `conic-gradient(${KFcolors.join(", ")})`;
-    }
+
+        // sets to nothing first
+        passedElement.style.backgroundImage = "none";
+        passedElement.style.backgroundColor = "none";
+
+        // if the color has been called to reset (or none were passed)
+        if (KFcolors === "default") {
+            // user inform
+            console.log("Clearing", elementName, "color(s)");
+            // if the passed element is title
+            if (passedElement === "title") {
+                // if the config has more than 1 color stored
+                if (dTClength > 1) {
+                    // sets the color to default from config
+                    passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${defaultTitleColor})`;
+                }
+                // if there's less than 1 color
+                else {
+                    // sets the color to default or white, if unable to use
+                    passedElement.style.backgroundColor = defaultTitleColor || "#ffffff";
+                }
+            }
+            // if the passed element is artist or album
+            else if (passedElement === "artist" || passedElement === "album") {
+                if (dSClength > 1) {
+                    // sets the color to default from config
+                    passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${defaultSupportColors})`;          
+                }
+                // if there's less than 1 color
+                else {
+                    // sets the color to default or white, if unable to use
+                    passedElement.style.backgroundColor = defaultSupportColors || "#ffffff";
+                }
+            }
+            // if the passed element is bar and it has more than 1 color in config
+            else if (passedElement === "bar") {
+                if (dPClength > 1) {
+                    // sets the color to default from config
+                    passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${defaultProgressColor})`;  
+                }
+                // if there's less than 1 color
+                else {
+                    // sets the color to default or white, if unable to use
+                    passedElement.style.backgroundColor = defaultProgressColor || "#ffffff";
+                }
+            }
+        }
+        // if only one color was given (config default, config goes straight here)
+        else if (KFcolors.length === 1) {
+            // user inform
+            console.log("Found 1 color - setting", elementName, "to color");
+            // sets the colors variable to match the only color
+            passedElement.style.backgroundColor = `${KFcolors[0]}`
+        }
+        // if two or more colors were given
+        else {
+            // user inform
+            console.log("Found", KFcolors.length , "colors - setting", elementName, "to gradient with given colors");
+            // sets the colors variable to match
+            passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${KFcolors.join(", ")})`;
+        }
+    } // closes other elements' check
 }
 
 </script>

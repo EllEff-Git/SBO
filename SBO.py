@@ -15,7 +15,7 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.17.1105"
+SBO_ver = "v0.3.24.0943"
 """The SBO program version (y.m.dd.hhmm)"""
 
 
@@ -557,13 +557,8 @@ def botCommand(command: str, client_socket):
     elif command.startswith(("Song Color:", "Text Color:", "Bar Color:", "Overlay Color:")):
         func, color = command.split(": ", 1)
         # splits the command into the function and the color to pass
-        if func == "Overlay Color" and " " in color:
-        # if the command/function is overlay color and there's a space in color (means multiple colors)
-            overlayColor(color)
-            # directly calls overlayColor, skipping the colorChanger part
-        else:
-            colorChanger(func, color)       
-            # calls the colorChanger with the parsed function and color as parameters
+        colorChanger(func, color)       
+        # calls the colorChanger with the parsed function and color as parameters
         return
         # stops cheks
     
@@ -826,20 +821,23 @@ def colorManager(command:str, client_socket, color:str, hexCode:str = None):
 
 
 def colorChanger(func: str, color: str):
-    """Helper function to call the correct color changer function"""
-    global callSong
-    # grabs the boolean from global -> local
+    """Color function to handle the chat -> WS color sending"""
+    global callSong, overlayColorHex, songColorHex, textColorHex, barColorHex
+    # grabs the boolean from global -> local as well as all the hex codes
 
-    colorFunctions = {
-        "Song Color": songColor,
-        "Text Color": textColor,
-        "Bar Color": barColor,
-        "Overlay Color": overlayColor
+    funcName = func.split(" ")[0]
+    # gets the first part of the function (the type, not the "Color")
+
+    funcMap = {
+        "Overlay Color": "borderColor",
+        "Text Color": "supportColor",
+        "Song Color": "titleColor",
+        "Bar Color": "progressColor"
     }
-    # stores all the color-related functions in a map
+    # a map of the color commands and what their WS/HTML counterpart is
 
-    if not hexCheck(color):
-        # if the color isn't a valid hex
+    if not hexCheck(color) and not " " in color:
+        # if the color isn't a valid hex and there's no space (multiple colors)
         if color in customColors:
             # if the color is a string that matches one in the custom colors
             color = customColors[color]
@@ -853,73 +851,20 @@ def colorChanger(func: str, color: str):
             color = "#" + color
             # if not, adds the # (needed to pass hex values to HTML)
 
-    colorFunctions[func](color)
-    # calls a function based on the parameters
-    callSong = True
-    # turns the flag to call song() to True (tells looper to run a song() instance regardless of song update)
-
-def songColor(color: str):
-    """Changes the color of the song text"""
-    global songColorHex
     if color == "clear":
     # if the command is to clear, not to set a color
-        songColorHex = "Clear"
-        # sets the field to "Clear" so that SBO-WS can add the default value
-        print(f"{Time()}[COLOR]: Song text color cleared")
-        # color user inform
-    else:
-        songColorHex = color
-        # sets the color to match
-        print(f"{Time()}[COLOR]: Song text color set to: {color}")
-        # color user inform
-
-def textColor(color: str):
-    """Changes the color of the overlay text"""
-    global textColorHex
-    if color == "clear":
-    # if the command is to clear, not to set a color
-        textColorHex = "Clear"
-        # sets the field to "Clear" so that SBO-WS can add the default value
-        print(f"{Time()}[COLOR]: Text color cleared")
-        # color user inform
-    else:
-        textColorHex = color
-        # sets the color to match
-        print(f"{Time()}[COLOR]: Text color set to: {color}")
-        # color user inform
-
-def barColor(color: str):
-    """Changes the color of the progress bar"""
-    global barColorHex
-    if color == "clear":
-    # if the command is to clear, not to set a color
-        barColorHex = "Clear"
-        # sets the field to "Clear" so that SBO-WS can add the default value
-        print(f"{Time()}[COLOR]: Progress bar color cleared")
-        # color user inform
-    else:
-        barColorHex = color
-        # sets the color to match
-        print(f"{Time()}[COLOR]: Progress bar color set to: {color}")
-        # color user inform
-
-def overlayColor(color: str, client_socket=None):
-    """Changes the color of the overlay borders"""
-    global overlayColorHex
-    if color == "clear":
-    # if the command is to clear, not to set a color
-        overlayColorHex = "Clear"
-        # sets the field to "Clear" so that SBO-WS can add the default value
-        print(f"{Time()}[COLOR]: Overlay color cleared")
+        readyColorString = f"{funcMap[func]}: clear"
+        # forms a string from the passed function and clear
+        print(f"{Time()}[COLOR]: {funcName} color cleared")
         # color user inform
     elif not " " in color:
     # if there's only one color (no spaces)
-        overlayColorHex = color
-        # sets the color to match
-        print(f"{Time()}[COLOR]: Overlay color set to: {color}")
+        readyColorString = f"{funcMap[func]}: {color}"
+        # forms a string from the passed function and color
+        print(f"{Time()}[COLOR]: {funcName} color set to: {color}")
         # color user inform
     else:
-    # if the command isn't clear, and there is a space or multiple
+    # if the command isn't clear, and there is a space (or multiple)
         colors = color.split()
         # splits the colors by spaces
         readyColors = []
@@ -960,18 +905,19 @@ def overlayColor(color: str, client_socket=None):
             # cleans the string (sometimes they have random empty space from Twitch, could be a "can't repeat message" bypass?)
             readyColors.append(hexCode)
             # adds the ready hex code to the list
-        readyColorString = ", ".join(readyColors)
+        readyColorStringColors = ", ".join(readyColors)
         # creates a string by joining all the hex codes together
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as webClient:
-            # starts a new connection (with the same parameters)
-            webClient.connect(("127.0.0.1", webClientPort))
-            # connects to the existing host
-            webClient.sendall(readyColorString.encode("utf-8"))
-            # sends the message
-            webClient.close()
-            # stops the connection when it's done
-            print(f"{Time()}[PTP]: Sent overlay colors to WS")
-            # user inform on progress
+        readyColorString = f"{funcMap[func]}: {readyColorStringColors}"
+        # adds the websocket color identifier
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as webClient:
+        # starts a new connection (with the same parameters)
+        webClient.connect(("127.0.0.1", webClientPort))
+        # connects to the existing host
+        webClient.sendall(readyColorString.encode("utf-8"))
+        # sends the message
+        webClient.close()
+        # stops the connection when it's done
 
 
 
@@ -1156,16 +1102,21 @@ def song():
             # grabs the spotify track URL
             csPlaylist = csFull.get("context")
             # stores the list that contains the playlist/artist/album url
-            csContextType = csPlaylist.get("type")
-            # gets the context's type (this can be "playlist", "artist", "album" or "show")
-            if csContextType == "playlist":
-                # if the "context's" type is playlist
-                csPlaylistID = csPlaylist.get("uri").split(":")[-1]
-                # grabs the playlist ID by getting the playlist's URI (spotify:playlist:base62) and only taking the ID (base62)
-            else:
-                # if the context doesn't match
+            try: 
+                csContextType = csPlaylist.get("type")
+                # gets the context's type (this can be "playlist", "artist", "album" or "show")
+                if csContextType == "playlist":
+                    # if the "context's" type is playlist
+                    csPlaylistID = csPlaylist.get("uri").split(":")[-1]
+                    # grabs the playlist ID by getting the playlist's URI (spotify:playlist:base62) and only taking the ID (base62)
+                else:
+                    # if the context doesn't match
+                    csPlaylistID = "Not a playlist"
+                    # stores a preset string 
+            except:
+                # if there's no playlist
                 csPlaylistID = "Not a playlist"
-                # stores a preset string 
+                # stores a preset string
             csAlbumURLs = csAlbum.get("external_urls")
             # stores the album urls 
             sboAlbumURL = csAlbumURLs.get("spotify")

@@ -6,9 +6,11 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 # Required for web server hosting
 from fastapi.responses import FileResponse
 # Required for getting status from server
+from contextlib import asynccontextmanager
+# Required for managing the SBO -> HTML function
 
 
-SBO_WSver = "v0.3.17.1219"
+SBO_WSver = "v0.3.24.0938"
 """The program version (y.m.dd.hhmm)"""
 
 
@@ -35,8 +37,6 @@ keyframesTxt = os.path.join(directory, "keyframes.txt")
 
 ### Variables ###
 
-program = FastAPI()
-"""Creates a FastAPI client"""
 clients = set()
 """Creates a set/collection of elements"""
 
@@ -51,6 +51,8 @@ Config.read(ConfigPath, "utf8")
 
 ### Function ###
 
+ipAddressCfg = Config.get("Function", "address_Type", fallback="device").lower()
+"""The config option for the address to use (device/local, string)"""
 httpPort = Config.getint("Function", "http_Port", fallback=6868)
 """The websocket port (0-65333, int)"""
 playerTimeout = Config.getint("Function", "hide_Player_Timeout", fallback=15)
@@ -116,7 +118,7 @@ progressBarPaused = "#" + Config.get("Bar", "progress_Bar_Paused")
 ### Field Mapper ##
 
 allTypes = {
-    "color": ["titleColor", "supportColor", "progressColor", "borderColor"],
+    "color": ["borderColor", "supportColor", "titleColor", "progressColor"],
 
     "track": ["title", "artist", "album", "cover", "paused", "id",
             "progress", "duration"],
@@ -128,7 +130,6 @@ allTypes = {
     "progress": ["progress"]
 }
 # a map of what types of fields are added to the payload based on the key given via payloadBuilder
-# overlay only updates the border color(s)
 # color only updates the colors (no need to mess with the whole program)
 # progress only updates the timestamps (basically just ensuring everything's working smooth)
 # track updates all the song-related info (also includes timestamps to match them)
@@ -138,6 +139,9 @@ allTypes = {
 
 newColors = asyncio.Queue()
 """A queue to tell the program to send colors via WebSocket"""
+
+latestPayload = None
+"""Stores the last full payload sent, to pass to new clients on connect"""
 
 
 print(f"HTML overlay program {SBO_WSver} starting", flush=True)
@@ -156,8 +160,10 @@ if "," in defaultBorderColor:
         # adds a # to the start of the hex code and strips empty space
     defaultBorderColor = ", ".join(borderColors)
     # joins the string back together with commas (now with # in front of each code)
-    newColors.put_nowait(borderColors)
-    # puts the border colors into the queue
+    borderColorCmd = f"borderColor: {defaultBorderColor}"
+    # forms a string with the color type (for HTML)
+    newColors.put_nowait(borderColorCmd)
+    # puts the border color command into the queue
 else:
     # if no commas are found (1 color)
     defaultBorderColor = "#" + defaultBorderColor
@@ -321,52 +327,63 @@ def webHostListener():
 
                     message = rawMessage.decode("utf-8").strip()
                     # decodes it (bytes -> string) and strips empty space
-                    print(f"Command received:", message)
+                    print(f"HTML command received:", message, flush=True)
                     # prints a Python to Python (Peer to Peer) inform
-                    colors = message.split(",")
-                    # gets the colors from the message by splitting via commas
-                    colors = [color.strip() for color in colors]
-                    # strips each color for extra space
-                    newColors.put_nowait(colors)
+                    newColors.put_nowait(message)
                     # puts the color list into the queue
 
                 except socket.error as soc:
-                    print(f"Socket error with command: {soc}")
+                    print(f"Socket error with command: {soc}", flush=True)
                     break
                 except ConnectionAbortedError:
-                    print(f"Connection aborted by Windows (10053)")
+                    print(f"Connection aborted by Windows (10053)", flush=True)
                     break
         except socket.error as socF:
-            print(f"Error forming connection: {socF}")
+            print(f"Error forming connection: {socF}", flush=True)
 
 
 
-@program.get("/")
-# gets the HTML page
-async def index():
-    return FileResponse(site)
+async def sendToAll(message: str):
+    """Small function to ensure all connected clients receive messages"""
+    global clients
+    brokenClients = set()
+    # creates an empty set of clients that failed to connect
+
+    for client in list(clients):
+    # goes through each client in the connected list (global)
+        try:
+        # tries to send message
+            await client.send_text(message)
+            # sends the message to a client
+
+        except (WebSocketDisconnect, ConnectionResetError, RuntimeError):
+            # if a client is disconnected (refresh, close) or has a runtime error (also due to a client that has disconnected)
+            brokenClients.add(client)
+            # adds the disconnected client into the set
+        except Exception as err:
+            # any other error gets caught
+            if "Cannot call" in err:
+                # if the error is "cannot call "send" once a close message has been sent" (client not connected)
+                brokenClients.add(client)
+                # adds the disconnected client into the set
+            else:
+            # if the error is something other than "cannot call"
+                print(f"Error with Websocket: {err}", flush=True)
+                # user inform on error
+                brokenClients.add(client)
+                # adds the disconnected client into the set
+
+    for each in brokenClients:
+    # goes through each client in the broken client set (if any)
+        clients.discard(each)
+        # discards each broken client
 
 
 
-@program.get("/config.json")
-# gets the config file
-async def configPush():
-    return FileResponse(jsonCfg, media_type="application/json")
-    # sends the json dictionary that python made from config.ini
-    # this can be seen by going to localhost:(port)/config.json
-
-
-
-@program.websocket("/ws")
-# handles the websocket
-async def websocket(ws: WebSocket):
-    global allTypes, newColors
-
-    await ws.accept()
-    # gets the connection
-    clients.add(ws)
-    # adds clients to websocket
-
+async def looper():
+    """The function that manages the SBO -> HTML process"""
+    global allTypes, newColors, latestPayload
+    # grabs some variables (payload-related)
     try:
     # goes to send the first package immediately
 
@@ -413,8 +430,14 @@ async def websocket(ws: WebSocket):
         oldTimestamp = sbo.get("Timestamp", round(time.time(), 0))
         # stores the initial timestamp (or a rounded timestamp of current)
 
-        await ws.send_text(payloadBuilder(initialPayload, "full", allTypes["full"]))
-        # sends the payload with "track" type for when payloadBuilder returns it
+        builtPayload = payloadBuilder(initialPayload, "full", allTypes["full"])
+        # sends all the details to the payloadBuilder and stores the response
+
+        latestPayload = builtPayload
+        # stores the complete payload in the global variable
+
+        await sendToAll(builtPayload)
+        # sends the payload to websockets
 
         await asyncio.sleep(2)
         # sleeps 2 seconds after sending initial payload
@@ -424,13 +447,15 @@ async def websocket(ws: WebSocket):
 
             try:
                 # cheks if there are new colors
-                colors = newColors.get_nowait()
-                # if there's new colors, gets the colors and moves them to "colors" variable
+                message = newColors.get_nowait()
+                # if there's new colors, gets the message
+                command, colors = message.split(": ")
+                # splits the message so that the command stays on its own
                 colorMap = {
-                    "colors": colors
+                    command: colors
                 }
-                # creates a map with the colors
-                await ws.send_text(payloadBuilder(colorMap, "color", ["colors"]))
+                # creates a map with the element and colors
+                await sendToAll(payloadBuilder(colorMap, "color", allTypes["color"]))
                 # tells the websocket there's new colors, constructs new payload
                 newColors.task_done()
                 # tells the queue that the task is done
@@ -542,39 +567,115 @@ async def websocket(ws: WebSocket):
 
                 if colorChange and payloadDiff:
                     # if the color has changed AND *any* of the other 3
-                    await ws.send_text(payloadBuilder(payload, "full", allTypes["full"]))
-                    # sends a full payload (track + colors)
-
+                    builtPayload = payloadBuilder(payload, "full", allTypes["full"])
+                    # forms a full payload (track + colors)
                 elif colorChange:
                     # if the color has changed, all the other 3 haven't
-                    await ws.send_text(payloadBuilder(payload, "color", allTypes["color"]))
-                    # sends only a color payload
+                    builtPayload = payloadBuilder(payload, "color", allTypes["color"])
+                    # forms only a color payload
 
                 elif songChange or pauseChange:
                     # if either of the track elements has changed, color hasn't (progress doesn't matter because it's included in track)
-                    await ws.send_text(payloadBuilder(payload, "track", allTypes["track"]))
-                    # sends the track payload
+                    builtPayload = payloadBuilder(payload, "track", allTypes["track"])
+                    # forms the track payload
 
                 else:
                     # if there's a progress mismatch, but no song or pause change and no color update
-                    await ws.send_text(payloadBuilder(payload, "progress", allTypes["progress"]))
-                    # sends the progress payload
+                    builtPayload = payloadBuilder(payload, "progress", allTypes["progress"])
+                    # forms the progress payload
+
+                await sendToAll(builtPayload)
+                # sends the finished payload
+
+                latestPayload = builtPayload
+                # stores the current payload in the global variable
 
             await asyncio.sleep(2)
             # sleeps for 2 seconds between
 
-    except (WebSocketDisconnect, ConnectionResetError):
-        # any "disconnect" (leaving the site, refreshing, etc)
-        pass
-        # doesn't do anything (no need to spam console)
-
     except Exception as ex:
-        # if it somehow fails
-        print("Websocket error", ex, flush=True)
+    # if it somehow fails
+        print(f"Websocket error: {ex}", flush=True)
+        # user inform
 
+    except asyncio.CancelledError:
+    # if the looper is cancelled (stopped)
+        print(f"Shutting down websocket", flush=True)
+        # user inform
+
+
+
+@asynccontextmanager
+async def lifespan(app):
+# manages the "lifespan" of the looper function
+    looperTask = asyncio.create_task(looper())
+    # creates an async task for the looper to run
+    try:
+        yield
+    # lets the rest of the program run normally
     finally:
-        # deletes itself when the connection ends
+    # once the program is done (shut down)
+        looperTask.cancel()
+        # "cancels" (stops) the looperTask
+
+
+
+program = FastAPI(lifespan=lifespan)
+"""Creates a FastAPI client, adds the lifespan function inside"""
+
+
+
+@program.get("/")
+# gets the HTML page
+async def index():
+    return FileResponse(site)
+
+
+
+@program.get("/config.json")
+# gets the config file
+async def configPush():
+    return FileResponse(jsonCfg, media_type="application/json")
+    # sends the json dictionary that python made from config.ini
+    # this can be seen by going to localhost:(port)/config.json
+
+
+
+@program.websocket("/ws")
+# handles the websocket
+async def websocket(ws: WebSocket):
+    global clients, latestPayload
+
+    await ws.accept()
+    # accepts the websocket connection and stores the details
+    clients.add(ws)
+    # adds the websocket connection to the set of clients
+
+    if latestPayload is not None:
+    # checks if the latestPayload is already defined by looper()
+        try:
+        # if yes
+            await ws.send_text(latestPayload)
+            # sends the latestPayload (full payload) to the new client
+        except Exception:
+        # if it fails
+            pass
+            # does nothing
+ 
+    try: 
+    # just starts a while True loop to keep it active
+        while True:
+        # doesn't really do much
+            await ws.receive_text()
+            # "awaits" some text (never gets sent, since all clients should be receive-only)
+    except:
+    # if there's an exception (?)
+        pass
+        # doesn't do anything
+    finally:
+    # when the connection ends
         clients.discard(ws)
+        # removes the websocket connection
 
 
 if enableBot:
@@ -585,9 +686,19 @@ if enableBot:
     # starts the thread
 
 
+if ipAddressCfg == "device":
+    # if the config is set to device-only
+    ipAddress = "127.0.0.1"
+    # sets the address to device local-only
+else:
+    # if the config option isn't device-only
+    ipAddress = "0.0.0.0"
+    # sets the address to network-wide
+
+
 if __name__ == "__main__":
     # runs the socket starter
-    print(f"Overlay coming online at localhost:{httpPort}!", flush=True)
+    print(f"Overlay coming online at {ipAddress}:{httpPort}!", flush=True)
     # prints first, otherwise won't print
-    uvicorn.run(program, host="127.0.0.1", port=httpPort, log_level="warning", access_log=False)
-    # starts the web server as the FastAPI program, using a preset IP of (local) with the configurable httpPort - disables non-error prints and http requests
+    uvicorn.run(program, host=ipAddress, port=httpPort, log_level="warning", access_log=False)
+    # starts the web server as the FastAPI program, using the config-based IP, with configurable httpPort (also disables non-error prints and http requests)
