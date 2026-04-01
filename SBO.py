@@ -15,8 +15,8 @@ from spotipy.exceptions import SpotifyException
 
 
 
-SBO_ver = "v0.3.24.1012"
-"""The SBO program version (y.m.dd.hhmm)"""
+SBO_ver = "v0.4.1.0711"
+"""The SBO program version (Y.M.DD.HHMM)"""
 
 
 if getattr(sys, "frozen", False):
@@ -1094,27 +1094,29 @@ def song():
             songChanged = True
             # changes the songChanged boolean to true, tells the loop to update the song names
 
+        csPlaylist = csFull.get("context")
+        # stores the list that contains the playlist/artist/album url (this is "None", if playback isn't on playlist)
+
         if not isLocalSong and csItem:
             # can't access these if the playing song is local or csItem is None
             cstrackURL = csItem.get("external_urls")
             # stores the list that contains track's url
             csURL = cstrackURL.get("spotify")
             # grabs the spotify track URL
-            csPlaylist = csFull.get("context")
-            # stores the list that contains the playlist/artist/album url
             try: 
+            # tries to get the context type (if there isn't any, it would crash)
                 csContextType = csPlaylist.get("type")
                 # gets the context's type (this can be "playlist", "artist", "album" or "show")
                 if csContextType == "playlist":
-                    # if the "context's" type is playlist
+                # if the "context's" type is playlist
                     csPlaylistID = csPlaylist.get("uri").split(":")[-1]
                     # grabs the playlist ID by getting the playlist's URI (spotify:playlist:base62) and only taking the ID (base62)
                 else:
-                    # if the context doesn't match
+                # if the context doesn't match
                     csPlaylistID = "Not a playlist"
                     # stores a preset string 
             except:
-                # if there's no playlist
+            # if there's no playlist
                 csPlaylistID = "Not a playlist"
                 # stores a preset string
             csAlbumURLs = csAlbum.get("external_urls")
@@ -1123,12 +1125,15 @@ def song():
             # gets the spotify url 
 
         else:
-            # if the song is local
+        # if the song is local
+            csArtistName = "A local artist"
+            csAlbumName = "A local album"
             csURL = "A local song"
             sboAlbumURL = "A local album"
+            # sets all the variables to local
 
-        if csPlaylist != None:
-            # checks if user is playing a playlist
+        if csPlaylist != None and csPlaylist != "None":
+        # checks if user is playing a playlist
             csPlaylistURL = csPlaylist.get("external_urls")
             # gets *all* the URLs for the playlist
             csPlaylistURL = csPlaylistURL.get("spotify")
@@ -1137,7 +1142,7 @@ def song():
         else:
             # if there's no playlist
             csPlaylistURL = "No playlist"
-            csPlaylist = "No playlist"
+            csPlaylist = "Not listening to a playlist"
 
         songNameList.append(csName)
         # adds the song name to list
@@ -1217,7 +1222,7 @@ def looper():
     newSong = True
     # sets the new song boolean once
     while True:
-        # this loop checks if the song playing is the same as the previous update, waits if yes, updates the song to match if not
+    # this loop checks if the song playing is the same as the previous update, waits if yes, updates the song to match if not
 
         loopFuture = spotifyQueueInstance.queueManager("playback", None)
         # sends a call to the Spotify API call queue manager to get a new playback dictionary
@@ -1226,11 +1231,13 @@ def looper():
         # picks up all the info the Spotify API function sends (dictionary)
 
         if not info or not info.get("item"):
-            # checks if the info has something and if it can be called
+        # checks if the info has something and if it can be called
             print(f"{Time()}[WARN]: No playing state detected, re-checking in 5 seconds\n")
+            # user inform
             time.sleep(5)
             # waits for a few seconds
             continue
+            # goes back to loop start
         
         currentInfo = info
         # sets the global variable to match
@@ -1249,14 +1256,14 @@ def looper():
         # stores the timestamp that the last action happened (play, pause, skip, scrub, new song)
 
         if newSong or currentURI is None:
-            # if the song has changed or none is set
+        # if the song has changed or none is set
             songStart = int(timeNow - songProg)
             # stores the start time of the song by taking current time and subtracting progress
             newSong = False
             # sets the boolean to false, since it's been processed now
 
         if currentURI is None:
-            # when the program first starts, the currentURI will be "None", this updates it, along with other variables
+        # when the program first starts, the currentURI will be "None", this updates it, along with other variables
             currentURI = songURI
             # sets the current song to match 
             expectProg = (songProg + 2)
@@ -1278,36 +1285,36 @@ def looper():
         # checks if the difference between the Spotify given progress and the calculated progress
 
         if ((songStart + songDur + 2) > timeNow) and ((timeNow - lastActionTS) >= songDur) and (songProg < 3):
-            # if the song "should've" ended (start + duration + slight addition > now) and the song hasn't been touched in any way during its playback
+        # if the song "should've" ended (start + duration + slight addition > now) and the song hasn't been touched in any way during its playback
             newSong = True
             # sets the newSong boolean to True, because the song very likely did
 
         if (currentURI != songURI):
-            # if the URIs don't match
+        # if the URIs don't match
             newSong = True
             # sets the newSong boolean to True
 
         if (progressOffset >= 6 and playing):
-            # checks if there's a mismatch between expected and real progress of >= 6 seconds 
+        # checks if there's a mismatch between expected and real progress of >= 6 seconds 
             # leaves a delta of 3-4 seconds, any change larger than that is scrubbing, or at the very least worth updating the overlay
             progressMismatch = True
             # if there is, sets the flag to True (will cause an update)
-            expectProg = (songProg + 2)
-            # calculates the expected progress by taking the current progress and adding 2 seconds (1 cycle time)
+            expectProg = (songProg + 5)
+            # calculates the expected progress by taking the current progress and adding 5 seconds (1 cycle time)
         else:
-            # if the mismatch isn't big enough and the song is playing
-            expectProg = (songProg + 2)
-            # calculates the expected progress by taking the current progress and adding 2 seconds (1 cycle time)
+        # if the mismatch isn't big enough and the song is playing
+            expectProg = (songProg + 5)
+            # calculates the expected progress by taking the current progress and adding 5 seconds (1 cycle time)
 
         if newSong or (pauseUpdated and playing) or progressMismatch:
         # if there's a reason to update the text file;
-        # a song change (the URI has changed, must mean a new song)
-        # it mathematically has to be a new song (or something is very broken)
-        # if there was a pause, but is now playing (-> removes the "paused on" text)
-        # if a progress mismatch has been triggered (-> sets the correct times on overlay)
+            # a song change (the URI has changed, must mean a new song)
+            # it mathematically has to be a new song (or something is very broken)
+            # if there was a pause, but is now playing (-> removes the "paused on" text)
+            # if a progress mismatch has been triggered (-> sets the correct times on overlay)
 
             if newSong:
-                # if the song URI is new, or the starting timestamps are very off
+            # if the song URI is new, or the starting timestamps are very off
                 print(f"\n{Time()}[SONG]: New song: {songName}, duration: {songDur:,.0f} seconds")
                 # user update on new song (makes a new line before itself so it separates tracks)
                 trackCounter += 1
@@ -1316,7 +1323,7 @@ def looper():
                 # changes the internal variable to match new song
 
             if progressMismatch and playing:
-                # checks if there was a progress mismatch (has to be playing)
+            # checks if there was a progress mismatch (has to be playing)
                 progressMismatch = False
                 # sets the mismatch flag to false
                 updateProgress += 1
@@ -1328,16 +1335,16 @@ def looper():
             # if a new song is set, it'll run the song() normally, no need to separately run
 
             if pauseUpdated and playing:
-                # if it's playing and the pauseUpdate has been set to true
+            # if it's playing and the pauseUpdate has been set to true
                 print(f"\n{Time()}[SONG]: Unpaused: {songName}")
                 # prints the update message
                 pauseUpdated = False
                 # sets the pauseUpdated to false, so it doesn't run twice
 
-            time.sleep(1.5)
+            time.sleep(2.5)
             # waits a second
             continue
-            # sends back to the start of looper to check for a new song (1 second checks after a song change to check for a song skip)
+            # sends back to the start of looper to check for a new song (2.5 second checks after a song change to check for a song skip)
 
         if not playing and not pauseUpdated and currentURI == songURI:
         # if the song is paused, hasn't yet updated the pause state *and* the song is the same
@@ -1349,11 +1356,11 @@ def looper():
             # sets the pause check to True, meaning it has been checked and acted on
             print(f"\n{Time()}[SONG]: Paused on: {songName}")
             # user inform (new line to split from main updates, only prints once anyway)
-            sleepfor = 2
+            sleepfor = 5
             # waits a couple seconds
 
         if callSong:
-            # if there's a callSong request from colorChanger, and both checks passed (no new song, no pause state)
+        # if there's a callSong request from colorChanger, and both checks passed (no new song, no pause state)
             songEvent.set()
             # sets an event to make song() update the text file
             callSong = False
@@ -1361,12 +1368,12 @@ def looper():
 
         else:
         # if the current song is the same, and is not paused
-            if songLeft > 2:
-                # checks if there's more than 2s left
-                sleepfor = 2
-                # sets the sleep timer to 2s
+            if songLeft > 5:
+            # checks if there's more than 5s left
+                sleepfor = 5
+                # sets the sleep timer to 5s
             else:
-                # if there's less song time left than 2s
+            # if there's less song time left than 5s
                 sleepfor = songLeft + 1
                 # sleeps for the rest of the song (+1s to ensure the song has ended)
 

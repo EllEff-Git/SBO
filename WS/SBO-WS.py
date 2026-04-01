@@ -10,8 +10,8 @@ from contextlib import asynccontextmanager
 # Required for managing the SBO -> HTML function
 
 
-SBO_WSver = "v0.3.24.0938"
-"""The program version (y.m.dd.hhmm)"""
+SBO_WSver = "v0.4.1.0546"
+"""The program version (Y.M.DD.HHMM)"""
 
 
 ### Directories ###
@@ -73,32 +73,10 @@ albumPrefix = Config.get("Visuals", "album_Prefix")
 
 ### Title ###
 
-titleStyle = Config.get("Title", "title_Style", fallback="italic").lower()
-"""The title styling in HTML (string)"""
-titleWeight = Config.get("Title", "title_Weight", fallback="bold")
-"""The title font weight in HTML (string)"""
-try:
-    # tries to change the titleWeight to an integer (if it's stores as such)
-    titleWeight = int(titleWeight)
-except:
-    # if it can't save as integer, turns into lowercase
-    titleWeight = titleWeight.lower()
-
 defaultTitleColor = "#" + Config.get("Title", "title_Color", fallback="ffffff")
 """The default color for title (may be overwritten via SBO due to Bot (string, hex))"""
 
 ### Support ###
-
-supportStyles = Config.get("Support", "support_Styles", fallback="italic").lower()
-"""The supporting string styling in HTML (string)"""
-supportWeights = Config.get("Support", "support_Weights", fallback="normal")
-"""The supporting string weight in HTML (string)"""
-try:
-    # tries to change the supportWeights to an integer (if it's stores as such)
-    supportWeights = int(supportWeights)
-except:
-    # if it can't save as integer, turns into lowercase
-    supportWeights = supportWeights.lower()
 
 defaultSupportColors = "#" + Config.get("Support", "support_Colors", fallback="ffffff")
 """The default color for support texts (may be overwritten via SBO due to Bot (string, hex))"""
@@ -143,6 +121,9 @@ newColors = asyncio.Queue()
 latestPayload = None
 """Stores the last full payload sent, to pass to new clients on connect"""
 
+updateProgress = False
+"""A boolean check to see if a new client has connected (if a progress update should be sent)"""
+
 
 print(f"HTML overlay program {SBO_WSver} starting", flush=True)
 # quick user update
@@ -173,11 +154,7 @@ else:
 HTMLconfig = {
     "httpPort": httpPort,
     "playerTimeout": playerTimeout,
-    "titleStyle": titleStyle,
-    "titleWeight": titleWeight,
     "titleColor": defaultTitleColor,
-    "supportStyles": supportStyles,
-    "supportWeights": supportWeights,
     "supportColors": defaultSupportColors,
     "borderColor": defaultBorderColor,
     "progressBarColor": defaultBarColor,
@@ -382,7 +359,7 @@ async def sendToAll(message: str):
 
 async def looper():
     """The function that manages the SBO -> HTML process"""
-    global allTypes, newColors, latestPayload
+    global allTypes, newColors, latestPayload, updateProgress
     # grabs some variables (payload-related)
     try:
     # goes to send the first package immediately
@@ -475,8 +452,8 @@ async def looper():
             fileTimestamp = sbo.get("Timestamp", round(time.time(), 0))
             # gets the timestamp from the file (or uses current time if it can't find any)
 
-            if (fileTimestamp != oldTimestamp):
-                # if the timestamps are different (means SBO has updated *something*)
+            if (fileTimestamp != oldTimestamp) or updateProgress:
+                # if the timestamps are different (means SBO has updated *something*), or there's a request to update progress
 
                 ### PAYLOAD COMPARISON ###
 
@@ -565,10 +542,13 @@ async def looper():
 
                 ### PAYLOAD SELECTION ###
 
-                if colorChange and payloadDiff:
-                    # if the color has changed AND *any* of the other 3
+                if colorChange and payloadDiff or updateProgress:
+                    # if the color has changed AND *any* of the other 3 *or* the progress update is requested
+                    # needs to be full, because it'll give *all* relevant information to the new client, including progress
                     builtPayload = payloadBuilder(payload, "full", allTypes["full"])
                     # forms a full payload (track + colors)
+                    updateProgress = False
+                    # sets the boolean to False so it doesn't re-run
                 elif colorChange:
                     # if the color has changed, all the other 3 haven't
                     builtPayload = payloadBuilder(payload, "color", allTypes["color"])
@@ -644,12 +624,14 @@ async def configPush():
 @program.websocket("/ws")
 # handles the websocket
 async def websocket(ws: WebSocket):
-    global clients, latestPayload
+    global clients, latestPayload, updateProgress
 
     await ws.accept()
     # accepts the websocket connection and stores the details
     clients.add(ws)
     # adds the websocket connection to the set of clients
+    updateProgress = True
+    # sets the progress update requirement to True (sends a progress update)
 
     if latestPayload is not None:
     # checks if the latestPayload is already defined by looper()
@@ -676,6 +658,31 @@ async def websocket(ws: WebSocket):
     # when the connection ends
         clients.discard(ws)
         # removes the websocket connection
+
+
+
+def sboCheck():
+    """Quick crash-prevention function that checks if the sbo.txt file is already formed"""
+    while True:
+    # keeps running this check
+        if not os.path.exists(sboTxt):
+        # if the sbo.txt file doesn't yet exist (SBO hasn't processed it yet)
+            print(f"The text file for websocket connection doesn't exist yet, waiting...", flush=True)
+            # user inform
+            time.sleep(5)
+            # waits 5 seconds
+            continue
+            # goes back to start
+        else:
+        # if the file does exist
+            print(f"Found sbo.txt! Starting websocket connection", flush=True)
+            # user inform
+            break
+            # stop loop
+
+
+sboCheck()
+# runs the text file check
 
 
 if enableBot:

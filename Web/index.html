@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.3.24.0943</title>
+<title>Spotify Overlay v0.4.1.0824</title>
 
 <script>
 
@@ -19,13 +19,13 @@ let lastUpdateTime = Date.now();
 let maxInfoSize = 0, playerTimeout = 0, outerX = 0, outerY = 0;
 
 // initialises a boolean for pause state stuff
-let isPaused = false, isHidden = false;
+let isPaused = false, wasPaused = false;
 
 // initialises global variables (websocket + all the elements)
 let ws, player, cover, fakeBorder, background, titleElement, artistElement, albumElement, bar, timer, backgroundCover;
 
 // initialises global color variables
-let defaultTitleColor, defaultSupportColors, defaultBorderColor, defaultProgressColor;
+let defaultTitleColor, defaultSupportColors, defaultBorderColor, defaultProgressColor, defaultPauseColor;
 
 // initialises global color variable lengths
 let dTClength, dSClength, dBClength, dPClength;
@@ -77,6 +77,7 @@ document.addEventListener("DOMContentLoaded", () => {
         defaultSupportColors = Config.supportColors;
         defaultProgressColor = Config.progressBarColor;
         defaultBorderColor = Config.borderColor;
+        defaultPauseColor = Config.progressBarPaused;
 
         // splits the color variables and stores their lengths (used later for checks when clearing colors)
         if (defaultTitleColor.includes(",")) {
@@ -148,16 +149,7 @@ document.addEventListener("DOMContentLoaded", () => {
         gradientCheck(defaultSupportColors, "album");
         gradientCheck(defaultProgressColor, "bar");
         gradientCheck(defaultBorderColor, "spinner");
-        
-        // title styling
-        document.documentElement.style.setProperty("--titleStyle", Config.titleStyle);
-        document.documentElement.style.setProperty("--titleWeight", Config.titleWeight);
-        // album, artist, timer styling
-        document.documentElement.style.setProperty("--supportStyles", Config.supportStyles);
-        document.documentElement.style.setProperty("--supportWeights", Config.supportWeights);
-        // progress bar style
-        document.documentElement.style.setProperty("--pbcPause", Config.progressBarPaused);
-
+    
         // gets the timeout duration to hide player
         playerTimeout = (Config.playerTimeout * 1000);
 
@@ -228,24 +220,18 @@ document.addEventListener("DOMContentLoaded", () => {
             // "progress" only happens if SBO spots the real progress and expected progress doesn't match (within a set threshold)
             // this allows the Twitch chat commands to not re-run the entire program just to change colors
 
-            // if the set data type is "track" or "full" (meaning song has changed)
+            // if the set data type is "track" or "full" (meaning song or state has changed)
             if (data.type === "track" || data.type === "full") {
 
                 // assigns the boolean from the payload
                 isPaused = data.paused
                 // adds/removes the paused element style, based on the payload boolean for pause state
-                if(isPaused) {
-                    player.classList.add("paused");
+                if (isPaused) {
                     // if the player interval isn't running yet (is null)
                     if (playerIntervalID === null) {
                         // starts a checker every 1 second to see if player should be hidden
                         playerIntervalID = setInterval(playerHider, 1000);
                     }
-                }
-                // if the playback isn't paused
-                else {
-                    // removes the pause element style from the classList
-                    player.classList.remove("paused");
                 }
 
                 // sets the timer variables (with fallbacks)
@@ -274,7 +260,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     setTimeout(() => {
 
                         // grabs the text contents from the data file and turns into elements (uses "" if not found)
-                        titleElement.textContent = data.title || "";
                         artistElement.textContent = data.artist || "";
                         albumElement.textContent = data.album || "";
 
@@ -341,10 +326,29 @@ document.addEventListener("DOMContentLoaded", () => {
                 // updates the progress variable to match real-ish time
                 currentProgress = data.progress;
             }
+            // if the data type is "track", meaning the track had an update (paused)
+            if (data.type === "track") {
+                // if there's a pause (meaning paused bar visual should be applied)
+                if (data.paused && !wasPaused) {
+                    // runs gradientCheck on the progress bar
+                    gradientCheck(defaultPauseColor, "bar")
+                    // sets the "wasPaused" to true, so the bar can change back
+                    wasPaused = true;
+                }
+                // if the track isn't paused
+                else {
+                    // runs gradientCheck on the progress bar
+                    gradientCheck(defaultProgressColor, "bar")
+                    // sets the "wasPaused" to false, so the bar doesn't get reset again
+                    wasPaused = false;
+                }
+            }
+
 
             // if the player isn't paused, regardless of payload type
             if (!isPaused) {
                 // sets the player hider variables to null
+                clearInterval(playerIntervalID);
                 playerIntervalID = null;
                 // sets the start time to null so it can restart
                 startTime = null;
@@ -355,8 +359,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 background.style.opacity = 1;
                 fakeBorder.style.transition = "opacity 1s";
                 fakeBorder.style.opacity = 1;
-                // sets the flag back to false so it can rerun if necessary
-                isHidden = false;
             }
         }; // closes the payload check
     });
@@ -396,7 +398,9 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
         <!-- the progress container, houses the progress bar and timer-->
         <div id="progress-container">
-            <!-- the progress bar-->
+            <!-- the progress bar 
+                "progress" is the container, houses the background color (#949494 default ~greyish)
+                "bar" is the actual bar, which colors get applied to and moves based on percentage -->
             <div id="progress"><div id="bar"></div></div>
             <!-- the progress timer, sets default value -->
             <div id="timer">0:00 / 0:00</div>
@@ -638,11 +642,11 @@ body {
     min-width: 0;
     /* stops the fields from submitting to other size restrictions */
     flex-shrink: 0;
-    /* the size of the text (overridden by title) */
+    /* the size of the text */
     font-size: 14px; 
-    /* the text styling (overridden by title) */
-    font-weight: var(--supportWeights);
-    font-style: var(--supportStyles);
+    /* the text styling */
+    font-weight: bold;
+    font-style: italic;
     /* adds borders around the text - looks better in browser capture, comment out/set to 0px if it interferes 
         basically just helps the text not "shimmer" when it's scrolling */
     -webkit-text-stroke: 0.5px black;
@@ -657,9 +661,9 @@ body {
 .title {
     /* lets the title sit slightly above where the default is */
     top: -3px;
-    /* the title styling */
-    font-weight: var(--titleWeight);
-    font-style: var(--titleStyle);
+    /* the title's styling (matches the others now, can be changed) */
+    font-weight: bold;
+    font-style: italic;
     /* the size of the title text */
     font-size: 19px;
     /* makes the text scale to fit without restrictions */
@@ -672,6 +676,9 @@ body {
     /* makes the text scale to fit without restrictions */
     width: auto;
     max-width: none;
+    /* the support text's styling (matches the title now, can be changed) */
+    font-weight: bold;
+    font-style: italic;
 }
 
 /* the progress bar + timer container */
@@ -687,7 +694,7 @@ body {
     max-width: var(--maxInfoWidth, 80%);
 }
 
-/* progress bar (empty) */
+/* progress bar (background / empty) */
 #progress {
     flex: 1;
     /* sets minimum width */
@@ -710,7 +717,7 @@ body {
 #bar {
     height: 100%;
     /* sets a background image */
-    background: linear-gradient(22.5deg, #1ED760);
+    background-color: #1ED760;
     width: 0%;
     /* adds a tiny transition to smoothe the bar updates */
     transition: width 0.4s linear;
@@ -718,13 +725,6 @@ body {
     position: absolute;
     top: 0;
     left: 0;
-}
-
-/* progress bar (paused) */
-#player.paused #bar {
-    /* sets the color to match the config-set pause color (default color of red if none found/set) */
-    background: var(--pbcPause, #FF2C00);
-    opacity: 1;
 }
 
 /* the timer/duration on the right */
@@ -950,8 +950,8 @@ function playerHider() {
     // gets the current time every loop
     const currentTime = Date.now();
 
-    // if the time between pause start and now is > the set timeout time
-    if ((currentTime - startTime) > playerTimeout) {
+    // if the time between pause start and now is > the set timeout time *and* the playerinterval is defined (means it hasn't been cancelled)
+    if (((currentTime - startTime) > playerTimeout) && playerIntervalID !== null) {
         // sets a transition and opacity 
         player.style.transition = "opacity 2s";
         player.style.opacity = 0;
@@ -959,10 +959,15 @@ function playerHider() {
         background.style.opacity = 0;
         fakeBorder.style.transition = "opacity 2s";
         fakeBorder.style.opacity = 0;
-        // sets the flag to true so it can be detected when playback continues
-        isHidden = true;
         // stops the loop (clears the 1x/1s interval for running the playerHider)
         clearInterval(playerIntervalID);
+        // sets the interval to null
+        playerIntervalID === null;
+    }
+    // if the playerinterval is set to null
+    else if (playerIntervalID === null){
+        // stops running the function
+        return;
     }
 }
 
@@ -1086,20 +1091,23 @@ function gradientCheck(colorList, elementName) {
             // user inform
             console.log("Clearing", elementName, "color(s)");
             // if the passed element is title
-            if (passedElement === "title") {
+            if (elementName === "title") {
                 // if the config has more than 1 color stored
+                console.log(dTClength)
                 if (dTClength > 1) {
+                    console.log("I'm there!")
                     // sets the color to default from config
                     passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${defaultTitleColor})`;
                 }
                 // if there's less than 1 color
                 else {
+                    console.log("I'm here!")
                     // sets the color to default or white, if unable to use
-                    passedElement.style.backgroundColor = defaultTitleColor || "#ffffff";
+                    passedElement.style.backgroundColor = `${defaultTitleColor}`;
                 }
             }
             // if the passed element is artist or album
-            else if (passedElement === "artist" || passedElement === "album") {
+            else if (elementName === "artist" || elementName === "album") {
                 if (dSClength > 1) {
                     // sets the color to default from config
                     passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${defaultSupportColors})`;          
@@ -1111,15 +1119,24 @@ function gradientCheck(colorList, elementName) {
                 }
             }
             // if the passed element is bar and it has more than 1 color in config
-            else if (passedElement === "bar") {
-                if (dPClength > 1) {
-                    // sets the color to default from config
-                    passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${defaultProgressColor})`;  
+            else if (elementName === "bar") {
+                // if the player is not paused, continues to check colors
+                if (!isPaused) {
+                    // if there's one color
+                    if (dPClength > 1) {
+                        // sets the color to default from config
+                        passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${defaultProgressColor})`;  
+                    }
+                    // if there's less than 1 color
+                    else {
+                        // sets the color to default or white, if unable to use
+                        passedElement.style.backgroundColor = defaultProgressColor || "#ffffff";
+                    }
                 }
-                // if there's less than 1 color
+                // if the player *is* paused (shouldn't use custom colors, should only use pause color)
                 else {
-                    // sets the color to default or white, if unable to use
-                    passedElement.style.backgroundColor = defaultProgressColor || "#ffffff";
+                    // sets the background color to the pause color (uses FF2C00 if none found, red)
+                    passedElement.style.backgroundColor = defaultPauseColor || "#ff2c00";
                 }
             }
         }
