@@ -1,4 +1,4 @@
-import asyncio, os, sys, json, time, configparser
+import asyncio, os, sys, json, time
 # Required for file directory grabs, reads, asynchronous functions, etc
 import uvicorn, socket, threading
 # Required for websocketing and site management
@@ -8,102 +8,106 @@ from fastapi.responses import FileResponse
 # Required for getting status from server
 from contextlib import asynccontextmanager
 # Required for managing the SBO -> HTML function
+from SBOver import Version
+# Version manager
 
 
-SBO_WSver = "v0.4.1.0546"
+
+sboWSver = Version
 """The program version (Y.M.DD.HHMM)"""
+
 
 
 ### Directories ###
 
+directory = os.path.dirname(sys.executable)
+"""The base directory of the program, where SBO-WS.exe resides"""
 
-if getattr(sys, "frozen", False):
-    # since the program bundled with pyInstaller, it's "frozen"
-    directory = os.path.dirname(sys.executable)
-    """The base directory of the program, where SBO-WS.exe resides"""
-else:
-    # if somehow not in a bundled (frozen) state
-    directory = os.path.dirname(__file__)
-    """The base directory of the program, where SBO-WS.exe resides"""
-
-sboTxt = os.path.join(directory, "sbo.txt")
-"""Stores the full path of the sbo.txt file"""
-site = os.path.abspath(os.path.join(directory, "..", "Web", "index.html"))
+mainFolder = os.path.join(directory, "..", "..")
+"""The main folder of SBO (2 folders up)"""
+configFolderPath = os.path.join(os.environ["LOCALAPPDATA"], "SBO")
+"""The folder path that should contain all the configuration files"""
+site = os.path.abspath(os.path.join(mainFolder, "index.html"))
 """Stores the full path of the index.html file"""
-jsonCfg = os.path.join(directory, "config.json")
-"""Stores the full path of the config.json file"""
-keyframesTxt = os.path.join(directory, "keyframes.txt")
-"""Stores the full path of the keyframes.txt file"""
+
+
+funcConfigPath = os.path.join(configFolderPath, "functionConfig.json")
+"""The full path to the functional config file (C:/Users/<user>/AppData/Local/SBO/functionConfig.json)"""
+funcConfig = {}
+"""The dictionary that contains all of the functional configuration"""
+
+sboConfigPath = os.path.join(configFolderPath, "sboConfig.json")
+"""The full path to the SBO visual config file (C:/Users/<user>/AppData/Local/SBO/sboConfig.json)"""
+sboConfig = {}
+"""The SBO configuration dictionary"""
+
+if sys.stdout:
+# if launched as a subprocess, and there's a standard output pipe
+    sys.stdout.reconfigure(encoding="utf-8")
+    # ensures it uses UTF-8 encoding
+if sys.stdin:
+# same thing, but for input
+    sys.stdin.reconfigure(encoding="utf-8")
+    # yep
+
 
 ### Variables ###
 
 clients = set()
 """Creates a set/collection of elements"""
 
-### Required ###
-
-Config = configparser.ConfigParser(comment_prefixes = ["/", "#"], allow_no_value = True)
-"""The configuration file reader"""
-ConfigPath = os.path.join(directory, "..", "config.ini")
-"""The directory where the config sits in"""
-Config.read(ConfigPath, "utf8")
-# Where the config is read from, with UTF-8 format
-
-### Function ###
-
-ipAddressCfg = Config.get("Function", "address_Type", fallback="device").lower()
+skipSBOcfgWin = False
+"""Whether the SBO configuration window should be skipped (boolean)"""
+addressType = None
 """The config option for the address to use (device/local, string)"""
-httpPort = Config.getint("Function", "http_Port", fallback=6868)
+httpPort = 6868
 """The websocket port (0-65333, int)"""
-playerTimeout = Config.getint("Function", "hide_Player_Timeout", fallback=15)
+playerTimeout = 15
 """The time the player needs to be paused for before it hides itself, seconds (int)"""
-webHostPort = (Config.getint("Function", "http_Port", fallback=6666) + 2)
+webHostPort = 6870
 """The port to use for the SBO PTP connection (http_Port + 2, int)"""
-runBot = Config.getboolean("Twitch-Bot", "sbo_Runs_Bot")
-"""Whether to automatically start the bot program (boolean)"""
-enableBot = Config.getboolean("Twitch-Bot", "enable_Twitch_Bot")
-"""Whether to enable the Twitch Bot PTP connection  (boolean)"""
+enableBot = False
+"""Whether to enable the Twitch Bot PTP connection (boolean)"""
+enableShaaCompat = False
+"""Whether SHAA compatibility should be enabled (boolean)"""
 
 ### Visuals ###
 
-artistPrefix = Config.get("Visuals", "artist_Prefix", fallback="by")
+artistPrefix = "by"
 """A prefix string for the artist field (string)"""
-albumPrefix = Config.get("Visuals", "album_Prefix")
+albumPrefix = ""
 """A prefix string for the album field (string)"""
 
-### Title ###
+playerXaxisMod = 0
+"""The number of pixels to add to the player width"""
+playerYaxisMod = 0
+"""The number of pixels to add to the player height"""
 
-defaultTitleColor = "#" + Config.get("Title", "title_Color", fallback="ffffff")
-"""The default color for title (may be overwritten via SBO due to Bot (string, hex))"""
+defaultSongColor = "ffffff"
+"""The default color for song (string, hex)"""
+defaultArtistColor = "ffffff"
+"""The default color for artist (string, hex)"""
+defaultAlbumColor = "ffffff"
+"""The default color for album (string, hex)"""
+defaultBorderColor = "ffffff, 00ff00, 0000ff"
+"""The default color for border (string, hex)"""
 
-### Support ###
-
-defaultSupportColors = "#" + Config.get("Support", "support_Colors", fallback="ffffff")
-"""The default color for support texts (may be overwritten via SBO due to Bot (string, hex))"""
-
-### Border ###
-
-defaultBorderColor = Config.get("Border", "border_Color", fallback="ffffff")
-"""The default color for border (may be overwritten via SBO due to Bot (string, hex))"""
-
-### Progress Bar ###
-
-defaultBarColor = "#" + Config.get("Bar", "progress_Bar_Color")
-"""The default color for bar (may be overwritten via SBO due to Bot (string, hex))"""
-progressBarPaused = "#" + Config.get("Bar", "progress_Bar_Paused")
-"""The progress bar color when paused in HTML (hex)"""
+defaultBarColor = "1ED760"
+"""The default color for progress bar (string, hex)"""
+defaultPauseColor = "FF2C00"
+"""The default color for paused progress bar (string, hex)"""
 
 ### Field Mapper ##
 
 allTypes = {
-    "color": ["borderColor", "supportColor", "titleColor", "progressColor"],
+    "color": ["borderColor", "artistColor", "albumColor", "titleColor", "progressColor"],
 
     "track": ["title", "artist", "album", "cover", "paused", "id",
-            "progress", "duration"],
+            "progress", "duration", "shaa"],
 
     "full": ["title", "artist", "album", "cover", "paused", "id", 
-            "titleColor", "supportColor", "progressColor", "borderColor", 
-            "progress", "duration"],
+            "titleColor", "artistColor", "albumColor", "progressColor", "borderColor", 
+            "progress", "duration", "shaa"],
 
     "progress": ["progress"]
 }
@@ -114,73 +118,159 @@ allTypes = {
 # full updates everything (means both song and at least 1 color has changed)
 # progress means the progress change was too large (user skipped a part of song), just sets the progress to match
 
-
 newColors = asyncio.Queue()
 """A queue to tell the program to send colors via WebSocket"""
-
+stopBotHost = threading.Event()
+"""A threading event to kill the SBO -> WS connection (enabled by bot) on exit"""
+uviServer = None
+"""The uvicorn server setup"""
 latestPayload = None
 """Stores the last full payload sent, to pass to new clients on connect"""
-
 updateProgress = False
 """A boolean check to see if a new client has connected (if a progress update should be sent)"""
 
 
-print(f"HTML overlay program {SBO_WSver} starting", flush=True)
+
+print(f"HTML overlay program {sboWSver} starting", flush=True)
 # quick user update
 
 
-if "," in defaultBorderColor:
-    # if there's any commas in the default border color
-    defaultBorderColor = defaultBorderColor.replace('"', "")
-    # removes quotes it will have from being a string
-    borderColors = defaultBorderColor.split(",")
-    # splits the colors into a list by commas
-    for color in range(len(borderColors)):
-        # goes through the list of colors
-        borderColors[color] = "#" + borderColors[color].strip()
-        # adds a # to the start of the hex code and strips empty space
-    defaultBorderColor = ", ".join(borderColors)
-    # joins the string back together with commas (now with # in front of each code)
-    borderColorCmd = f"borderColor: {defaultBorderColor}"
-    # forms a string with the color type (for HTML)
-    newColors.put_nowait(borderColorCmd)
-    # puts the border color command into the queue
-else:
-    # if no commas are found (1 color)
-    defaultBorderColor = "#" + defaultBorderColor
-    # adds a # to the front
+
+### Color Split ###
+
+def colorSplitter(colorString: str):
+    """Function to split strings of color with no hex marker """
+
+    if "," in colorString:
+        # if there's any commas in the color string
+        colorString = colorString.replace('"', "")
+        # removes quotes it will have from being a string
+        splitColors = colorString.split(",")
+        # splits the colors into a list by commas
+        for color in range(len(splitColors)):
+            # goes through the list of colors
+            splitColors[color] = "#" + splitColors[color].strip()
+            # adds a # to the start of the hex code and strips empty space
+        colorString = ", ".join(splitColors)
+        # joins the string back together with commas (now with # in front of each code)
+    else:
+        # if no commas are found (1 color)
+        if not colorString.startswith("#"):
+        # if the color string doesn't have a # yet
+            colorString = f"#{colorString}"
+            # adds a # to the front to form a hex code
+    return colorString
+    # returns the formed color string (with fully-formed hex codes)
+
+
+
+### Functional Config ###
+
+def funcConfigManager():
+    """Function that manages the functional configuration"""
+    global funcConfig, httpPort, webHostPort, addressType, playerTimeout, enableBot, enableShaaCompat
+    # global -> local
+
+    if os.path.exists(funcConfigPath):
+    # if the config file exists
+        try:
+        # tries to read the config file (try because it could fail)
+            with open(funcConfigPath, "r", encoding="utf-8") as fncCfg:
+            # opens the SHAA config
+                funcConfig = dict(json.load(fncCfg))
+                # stores the loaded config
+                httpPort = int(funcConfig.get("httpPort", 6868))
+                webHostPort = int(httpPort + 2)
+                addressType = funcConfig.get("addressType", "Device")
+                playerTimeout = int(funcConfig.get("hidePlayerTimeout", 15))
+                enableBot = funcConfig.get("enableBot", True)
+                enableShaaCompat = funcConfig.get("enableShaaCompat", False)
+                # grabs the variables from the config file
+        except Exception as fErr:
+        # if the file can't be found/opened
+            print(f"Can't open functional configuration file! Please re-run the configurator and verify correct installation ({fErr}, E0)", flush=True)
+            # user warn
+            raise SystemExit
+            # quits
+    else:
+    # file doesn't exist
+        print("Can't find functional configuration file! Please re-run the configurator and verify correct installation (E0)", flush=True)
+        # user warn
+        raise SystemExit
+        # quits
+
+
+
+### SBO Config ###
+
+def sboConfigManager():
+    """Function that manages the SBO configuration"""
+    global sboConfig, artistPrefix, albumPrefix
+    global playerXaxisMod, playerYaxisMod
+    global defaultSongColor, defaultArtistColor, defaultAlbumColor
+    global defaultBorderColor, defaultBarColor, defaultPauseColor
+    # global -> local
+
+    if os.path.exists(sboConfigPath):
+    # if the config file exists
+        try:
+        # tries to read the config file (try because it could fail)
+            with open(sboConfigPath, "r", encoding="utf-8") as sboCfg:
+            # opens the SHAA config
+                sboConfig = dict(json.load(sboCfg))
+                # stores the loaded config
+                artistPrefix = sboConfig.get("artistPrefix", "by")
+                albumPrefix = sboConfig.get("albumPrefix", "")
+                playerXaxisMod = sboConfig.get("playerXaxis", 0)
+                playerYaxisMod = sboConfig.get("playerYaxis", 0)
+                defaultSongColor = colorSplitter(sboConfig.get("titleColor", "ffffff"))
+                defaultArtistColor = colorSplitter(sboConfig.get("artistColor", "ffffff"))
+                defaultAlbumColor = colorSplitter(sboConfig.get("albumColor", "ffffff"))
+                defaultBorderColor = colorSplitter(sboConfig.get("borderColors", "ff0000, 00ff00, 0000ff"))
+                defaultBarColor = colorSplitter(sboConfig.get("progressColor", "1ED760"))
+                defaultPauseColor = colorSplitter(sboConfig.get("progressPauseColor", "FF2C00"))
+                # grabs the variables from the config file
+        except Exception as fErr:
+        # if the file can't be found/opened
+            print(f"Can't read SBO configuration file! Please re-run the configurator and verify correct installation ({fErr}, E0)", flush=True)
+            # user warn
+            raise SystemExit
+            # quits
+    else:
+    # file doesn't exist
+        print("Can't find SBO configuration file! Please re-run the configurator and verify correct installation (E0)", flush=True)
+        # user warn
+        raise SystemExit
+        # quits
+
+funcConfigManager()
+sboConfigManager()
+# runs both config readers to get new variable data
+
 
 
 HTMLconfig = {
     "httpPort": httpPort,
     "playerTimeout": playerTimeout,
-    "titleColor": defaultTitleColor,
-    "supportColors": defaultSupportColors,
+    "playerXmod": playerXaxisMod,
+    "playerYmod": playerYaxisMod,
+    "shaaCompat": enableShaaCompat,
+    "titleColor": defaultSongColor,
+    "artistColor": defaultArtistColor,
+    "albumColor": defaultAlbumColor,
     "borderColor": defaultBorderColor,
     "progressBarColor": defaultBarColor,
-    "progressBarPaused": progressBarPaused
+    "progressBarPaused": defaultPauseColor
 }
-# assembles a config dictionary that will get passed to HTML/localhost
-
-
-with open(jsonCfg, "w") as htmlcfg:
-    # opens the json config file
-    json.dump(HTMLconfig, htmlcfg, indent=3) 
-    # stores the HTMLconfig inside
-
+# assembles a config dictionary that will get passed to the index.html
 
 print(f"HTML config updated", flush=True)
 # config read user update
 
 
-if runBot:
-    # if SBO should run the bot
-    enableBot = True
-    # also enables the bot connection
-
 
 if enableBot:
-    # if the bot is enabled
+# if the bot is enabled
     webHost = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     # creates the base webHost socket (defines)
     webHost.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -193,21 +283,30 @@ if enableBot:
     # debug print
 
 
-def readSBO() -> dict:
-    """Function to read the sbo.txt file and return "sbo", a dictionary"""
-    sbo = {}
-    # empty dictionary to store the contents in
 
-    with open(sboTxt, encoding="utf-8") as content:
-        # opens the text file with utf-8 encoding
-        for line in content:
-            # for every line in the file
-            if "=" in line:
-                # if there's an equals sign (all lines)
-                identifier, data = line.strip().split("=", 1)
-                # strips and splits the line to the left and right side (identifier and data)
-                sbo[identifier.strip()] = data.strip()
-                # stores inside the made dictionary as keyed entries
+async def getSBOdata() -> dict:
+    """Function to read the SBO data from STDIN and return a modified dictionary"""
+
+    try:
+        line = await asyncio.to_thread(sys.stdin.readline)
+        # waits for new data from SBO
+
+    except OSError as gErr:
+    # OS-level program stop 'error' (expected)
+        print("SBO -> WS connection terminated", flush=True)
+        # prints error
+        return
+        # stops
+
+    if not line:
+    # if there's nothing (SBO closed)
+        uviServer.should_exit = True
+        # tells the uvicorn server to close
+        return
+        # stop
+
+    sbo = json.loads(line)
+    # turns into dict form
 
     if artistPrefix:
         # if artistPrefix isn't empty (config)
@@ -224,9 +323,6 @@ def readSBO() -> dict:
         # adds it to the start of the string
         sbo["Album Name"] = albumName
         # replaces the original value with the new one 
-
-    sbo["Pause State"] = sbo.get("Pause State", "False").strip().lower() == "true"
-    # grabs the pause state and ensures it's a boolean here (checks if the lowercase version of this string == "true", stores that if check result)
 
     return sbo
     # returns the dictionary to the calling function
@@ -286,37 +382,56 @@ def webHostListener():
     print(f"Waiting for SBO to connect", flush=True)
     # prints the message on program start
 
-    while True:
-        # while the program is running
+    while not stopBotHost.is_set():
+    # while the threading event hasn't been called yet
         try:
-            client_socket, client_address = webHost.accept()
-            # waits for a client connection, in a while loop so it can reconnect if it ever disconnects
+            webHost.settimeout(1.0)
+            # sets a timeout of 1 second per attempt
+            try:
+            # tries to form a connection...
+                client_socket, client_address = webHost.accept()
+                # waits for a client connection, in a while loop so it can reconnect
+            except socket.timeout:
+            # if it can't find it in time
+                continue
+                # resets loop
 
-            while True:
-                # while this loop is active
-                try:
-                    rawMessage = client_socket.recv(1024)
-                    # grabs any messages sent (1024 bytes max, shouldn't use more than a few)
-                    if not rawMessage:
-                        # if the message is empty (disconnect)
+            with client_socket:
+            # while there's a connection
+                while not stopBotHost.is_set():
+                # while the stop hasn't been called yet
+                    try:
+                        rawMessage = client_socket.recv(1024)
+                        # grabs any messages sent (1024 bytes max, shouldn't use more than a few)
+                        if not rawMessage:
+                            # if the message is empty (disconnect)
+                            break
+                            # breaks to reset the connection
+
+                        message = rawMessage.decode("utf-8").strip()
+                        # decodes it (bytes -> string) and strips empty space
+                        print(f"HTML command received:", message, flush=True)
+                        # prints a Python to Python (Peer to Peer) inform
+                        newColors.put_nowait(message)
+                        # puts the color list into the queue
+
+                    except ConnectionAbortedError:
+                        print(f"Connection aborted by Windows (10053)", flush=True)
+                        # generic windows websocket error
                         break
-                        # breaks to reset the connection
+                        # reset
 
-                    message = rawMessage.decode("utf-8").strip()
-                    # decodes it (bytes -> string) and strips empty space
-                    print(f"HTML command received:", message, flush=True)
-                    # prints a Python to Python (Peer to Peer) inform
-                    newColors.put_nowait(message)
-                    # puts the color list into the queue
+                    except socket.error as soc:
+                        print(f"Socket error with command: {soc}", flush=True)
+                        # generic error with the socket (ideally not windows)
+                        break
+                        # reset
 
-                except socket.error as soc:
-                    print(f"Socket error with command: {soc}", flush=True)
-                    break
-                except ConnectionAbortedError:
-                    print(f"Connection aborted by Windows (10053)", flush=True)
-                    break
         except socket.error as socF:
-            print(f"Error forming connection: {socF}", flush=True)
+        # any failed attempts to connect
+            if not stopBotHost.is_set():
+            # only prints if the stop hasn't been called (if it has, then what's the point of erroring?)
+                print(f"Error forming connection: {socF}", flush=True)
 
 
 
@@ -364,8 +479,8 @@ async def looper():
     try:
     # goes to send the first package immediately
 
-        sbo = readSBO()
-        # calls readSBO and then stores the dictionary here as sbo
+        sbo = await getSBOdata()
+        # calls sbo data grabber and then stores the dictionary here as sbo
         songProg, songDur = unixConverter(sbo)
         # stores the progress and duration times from unixConverter
 
@@ -377,7 +492,8 @@ async def looper():
             "paused": sbo.get("Pause State", False),
             "id": sbo.get("Track ID", ""),
             "titleColor": noneRemover(sbo.get("Song Color")),
-            "supportColor": noneRemover(sbo.get("Text Color")),
+            "artistColor": noneRemover(sbo.get("Artist Color")),
+            "albumColor": noneRemover(sbo.get("Album Color")),
             "progressColor": noneRemover(sbo.get("Bar Color")),
             "borderColor": noneRemover(sbo.get("Overlay Color"))
         }
@@ -390,9 +506,13 @@ async def looper():
         initialPayload["duration"] = songDur
         # adds the timestamp keys after copying (because the progress will change *every* update, and sending a payload because of that is wasteful)
 
+        initialPayload["shaa"] = sbo.get("State") if enableShaaCompat else " "
+        # gets the State (contains the "x plays <> y minutes" string) or nothing, if SHAA is disabled
+
         lastColors = {
             "titleColor": initialPayload["titleColor"],
-            "supportColor": initialPayload["supportColor"],
+            "artistColor": initialPayload["artistColor"],
+            "albumColor": initialPayload["albumColor"],
             "progressColor": initialPayload["progressColor"],
             "borderColor": initialPayload["borderColor"]
         }
@@ -432,10 +552,12 @@ async def looper():
                     command: colors
                 }
                 # creates a map with the element and colors
+
                 await sendToAll(payloadBuilder(colorMap, "color", allTypes["color"]))
                 # tells the websocket there's new colors, constructs new payload
                 newColors.task_done()
                 # tells the queue that the task is done
+
                 await asyncio.sleep(2)
                 # sleeps for a couple seconds
                 continue
@@ -446,7 +568,7 @@ async def looper():
                 pass
                 # goes to next part, because that's expected
 
-            sbo = readSBO()
+            sbo = await getSBOdata()
             # calls readSBO and then stores the dictionary here as sbo
             
             fileTimestamp = sbo.get("Timestamp", round(time.time(), 0))
@@ -455,7 +577,7 @@ async def looper():
             if (fileTimestamp != oldTimestamp) or updateProgress:
                 # if the timestamps are different (means SBO has updated *something*), or there's a request to update progress
 
-                ### PAYLOAD COMPARISON ###
+            ### Payload Comparison ###
 
                 oldTimestamp = fileTimestamp
                 # sets the current timestamp
@@ -474,7 +596,8 @@ async def looper():
                     "paused": sbo.get("Pause State", False),
                     "id": sbo.get("Track ID", ""),
                     "titleColor": noneRemover(sbo.get("Song Color")),
-                    "supportColor": noneRemover(sbo.get("Text Color")),
+                    "artistColor": noneRemover(sbo.get("Artist Color")),
+                    "albumColor": noneRemover(sbo.get("Album Color")),
                     "progressColor": noneRemover(sbo.get("Bar Color")),
                     "borderColor": noneRemover(sbo.get("Overlay Color"))
                 }
@@ -482,7 +605,8 @@ async def looper():
 
                 currentColors = {
                     "titleColor": payload["titleColor"],
-                    "supportColor": payload["supportColor"],
+                    "artistColor": payload["artistColor"],
+                    "albumColor": payload["albumColor"],
                     "progressColor": payload["progressColor"],
                     "borderColor": payload["borderColor"]
                 }
@@ -502,7 +626,10 @@ async def looper():
                 payload["duration"] = songDur
                 # adds the timestamps *after* checking against the old version
 
-                ### TRACK ID CHECK ###
+                payload["shaa"] = sbo.get("State") if enableShaaCompat else " "
+                # gets the State (contains the "x plays <> y minutes" string)
+
+            ### Track ID Check ###
 
                 if payload["id"] != oldTrackID:
                     # checks if the old track ID matches the new one (song change)
@@ -515,7 +642,7 @@ async def looper():
                     songChange = False
                     # sets boolean to False
 
-                ### COLOR CHECK ###
+            ### Color Check ###
 
                 if currentColors != lastColors:
                     # if any of the colors have changed
@@ -528,7 +655,7 @@ async def looper():
                     colorChange = False
                     # sets color boolean to False
 
-                ### PAUSE CHECK ###
+            ### Pause Check ###
 
                 if currentPauseState != oldPauseState:
                     # checks if the previous pause state was the same
@@ -540,7 +667,7 @@ async def looper():
                     pauseChange = False
                     # sets pause boolean to False
 
-                ### PAYLOAD SELECTION ###
+            ### Payload Selection ###
 
                 if colorChange and payloadDiff or updateProgress:
                     # if the color has changed AND *any* of the other 3 *or* the progress update is requested
@@ -548,7 +675,10 @@ async def looper():
                     builtPayload = payloadBuilder(payload, "full", allTypes["full"])
                     # forms a full payload (track + colors)
                     updateProgress = False
-                    # sets the boolean to False so it doesn't re-run
+                    # sets the boolean to False so it doesn't re-run accidentally
+                    latestPayload = builtPayload
+                    # stores the current payload in the global variable
+
                 elif colorChange:
                     # if the color has changed, all the other 3 haven't
                     builtPayload = payloadBuilder(payload, "color", allTypes["color"])
@@ -558,6 +688,8 @@ async def looper():
                     # if either of the track elements has changed, color hasn't (progress doesn't matter because it's included in track)
                     builtPayload = payloadBuilder(payload, "track", allTypes["track"])
                     # forms the track payload
+                    latestPayload = builtPayload
+                    # stores the current payload in the global variable
 
                 else:
                     # if there's a progress mismatch, but no song or pause change and no color update
@@ -566,9 +698,6 @@ async def looper():
 
                 await sendToAll(builtPayload)
                 # sends the finished payload
-
-                latestPayload = builtPayload
-                # stores the current payload in the global variable
 
             await asyncio.sleep(2)
             # sleeps for 2 seconds between
@@ -592,11 +721,20 @@ async def lifespan(app):
     # creates an async task for the looper to run
     try:
         yield
-    # lets the rest of the program run normally
+        # lets the rest of the program run normally
     finally:
     # once the program is done (shut down)
-        looperTask.cancel()
-        # "cancels" (stops) the looperTask
+        if enableBot:
+        # if the bot as enabled and ran
+            stopBotHostFunc()
+            # calls the function responsible for closing the bot
+        try:
+            await looperTask.cancel()
+            # "cancels" (stops) the looperTask
+        except asyncio.CancelledError:
+        # if there's an error in cancelling
+            pass
+            # does nothing
 
 
 
@@ -609,13 +747,14 @@ program = FastAPI(lifespan=lifespan)
 # gets the HTML page
 async def index():
     return FileResponse(site)
+    # pushes the index.html up
 
 
 
 @program.get("/config.json")
 # gets the config file
 async def configPush():
-    return FileResponse(jsonCfg, media_type="application/json")
+    return HTMLconfig
     # sends the json dictionary that python made from config.ini
     # this can be seen by going to localhost:(port)/config.json
 
@@ -624,7 +763,8 @@ async def configPush():
 @program.websocket("/ws")
 # handles the websocket
 async def websocket(ws: WebSocket):
-    global clients, latestPayload, updateProgress
+    global clients, updateProgress
+    # global -> local
 
     await ws.accept()
     # accepts the websocket connection and stores the details
@@ -650,8 +790,8 @@ async def websocket(ws: WebSocket):
         # doesn't really do much
             await ws.receive_text()
             # "awaits" some text (never gets sent, since all clients should be receive-only)
-    except:
-    # if there's an exception (?)
+    except WebSocketDisconnect:
+    # if there's a disconnect
         pass
         # doesn't do anything
     finally:
@@ -661,39 +801,26 @@ async def websocket(ws: WebSocket):
 
 
 
-def sboCheck():
-    """Quick crash-prevention function that checks if the sbo.txt file is already formed"""
-    while True:
-    # keeps running this check
-        if not os.path.exists(sboTxt):
-        # if the sbo.txt file doesn't yet exist (SBO hasn't processed it yet)
-            print(f"The text file for websocket connection doesn't exist yet, waiting...", flush=True)
-            # user inform
-            time.sleep(5)
-            # waits 5 seconds
-            continue
-            # goes back to start
-        else:
-        # if the file does exist
-            print(f"Found sbo.txt! Starting websocket connection", flush=True)
-            # user inform
-            break
-            # stop loop
+### Stop Bot WS ###
 
-
-sboCheck()
-# runs the text file check
+def stopBotHostFunc():
+    """Function to stop the Bot -> SBO -> WS connection on exit"""
+    stopBotHost.set()
+    # sets the threading event to prevent any further calls
+    if webHost is not None:
+    # if the bot webhost exists
+        webHost.close()
+        # closes it
 
 
 if enableBot:
-    # if the config option to enable the bot is on (enabled by bot runner if not already)
-    webHostThread = threading.Thread(target=webHostListener)
+    # if the config option to enable the bot is on
+    webHostThread = threading.Thread(target=webHostListener, daemon=True)
     # creates a thread for the webhostlistener to sit in
     webHostThread.start()
     # starts the thread
 
-
-if ipAddressCfg == "device":
+if addressType == "Device":
     # if the config is set to device-only
     ipAddress = "127.0.0.1"
     # sets the address to device local-only
@@ -703,9 +830,35 @@ else:
     # sets the address to network-wide
 
 
-if __name__ == "__main__":
-    # runs the socket starter
+
+### Overlay Start ###
+
+async def hostOverlay():
+    """Function to host the overlay locally"""
+    global uviServer
+    # global -> local
+
+    uviConfig = uvicorn.Config(program, host=ipAddress, port=httpPort, log_level="warning", access_log=False)
+    # configures the uvicorn web server as the FastAPI program, using the config-based IP, with configurable httpPort (also disables non-error prints and http requests)
+    uviServer = uvicorn.Server(uviConfig)
+    # forms the uvicorn server based on the config
+
     print(f"Overlay coming online at {ipAddress}:{httpPort}!", flush=True)
     # prints first, otherwise won't print
-    uvicorn.run(program, host=ipAddress, port=httpPort, log_level="warning", access_log=False)
-    # starts the web server as the FastAPI program, using the config-based IP, with configurable httpPort (also disables non-error prints and http requests)
+
+    try:
+        await uviServer.serve()
+        # starts the server
+    except OSError as gErr:
+    # OS-level program stop 'error' (expected)
+        pass
+        # does nothing
+    finally:
+        print("Shutting down overlay host", flush=True)
+        # user inform
+
+
+if __name__ == "__main__":
+# at startup
+    asyncio.run(hostOverlay())
+    # runs the overlay hosting function

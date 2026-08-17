@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Spotify Overlay v0.4.1.0824</title>
+<title>Spotify Overlay</title>
 
 <script>
 
@@ -16,19 +16,22 @@ let duration = 1, tempProgress = 1;
 let lastUpdateTime = Date.now();
 
 // initialises player visual variables
-let maxInfoSize = 0, playerTimeout = 0, outerX = 0, outerY = 0;
+let maxInfoSize = 0, playerTimeout = 0, playerXmod = 0, playerYmod = 0;
 
 // initialises a boolean for pause state stuff
 let isPaused = false, wasPaused = false;
 
+// initialises a SHAA-compatibility check boolean
+let shaaCompat = false;
+
 // initialises global variables (websocket + all the elements)
-let ws, player, cover, fakeBorder, background, titleElement, artistElement, albumElement, bar, timer, backgroundCover;
+let ws, player, cover, fakeBorder, background, titleElement, shaaElement, artistElement, albumElement, bar, timer, backgroundCover;
 
 // initialises global color variables
-let defaultTitleColor, defaultSupportColors, defaultBorderColor, defaultProgressColor, defaultPauseColor;
+let defaultTitleColor, defaultArtistColor, defaultAlbumColor, defaultBorderColor, defaultProgressColor, defaultPauseColor;
 
 // initialises global color variable lengths
-let dTClength, dSClength, dBClength, dPClength;
+let dTClength, dArClength, dAlClength, dBClength, dPClength;
 
 // initialises widths for player 
 let playerWidthRaw = 0, playerHeightRaw = 0;
@@ -45,6 +48,7 @@ document.addEventListener("DOMContentLoaded", () => {
     background = document.getElementById("background");
     backgroundCover = document.getElementById("backgroundCover");
     titleElement = document.getElementById("title");
+    shaaElement = document.getElementById("shaa");
     artistElement = document.getElementById("artist");
     albumElement = document.getElementById("album");
     bar = document.getElementById("bar");
@@ -72,9 +76,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // sets all the variables that the elements use based on loaded config.json file
         
+        // stores the config x and y player modifiers 
+        playerXmod = Config.playerXmod;
+        playerYmod = Config.playerYmod;
+        
         // stores the config colors in these "default variables" (as strings)
         defaultTitleColor = Config.titleColor;
-        defaultSupportColors = Config.supportColors;
+        defaultArtistColor = Config.artistColor;
+        defaultAlbumColor = Config.albumColor;
         defaultProgressColor = Config.progressBarColor;
         defaultBorderColor = Config.borderColor;
         defaultPauseColor = Config.progressBarPaused;
@@ -96,19 +105,35 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // splits the color variables and stores their lengths (used later for checks when clearing colors)
-        if (defaultSupportColors.includes(",")) {
+        if (defaultArtistColor.includes(",")) {
             // splits the color string
-            const dSCtemp = defaultSupportColors.split(",");
+            const dArCtemp = defaultArtistColor.split(",");
             // stores the first color
-            const firstColor = dSCtemp[0];
+            const firstColor = dArCtemp[0];
             // stores the title color with the first color added to the end (helps smooth transitions)
-            defaultSupportColors = `${defaultSupportColors}, ${firstColor}`;
+            defaultArtistColor = `${defaultArtistColor}, ${firstColor}`;
             // stores the length in the global variable
-            dSClength = dSCtemp.length + 1;
+            dArClength = dArCtemp.length + 1;
         }
         // no comma = single color
         else {
-            dSClength = 1
+            dArClength = 1
+        }
+
+        // splits the color variables and stores their lengths (used later for checks when clearing colors)
+        if (defaultAlbumColor.includes(",")) {
+            // splits the color string
+            const dAlCtemp = defaultAlbumColor.split(",");
+            // stores the first color
+            const firstColor = dAlCtemp[0];
+            // stores the title color with the first color added to the end (helps smooth transitions)
+            defaultAlbumColor = `${defaultAlbumColor}, ${firstColor}`;
+            // stores the length in the global variable
+            dAlClength = dAlCtemp.length + 1;
+        }
+        // no comma = single color
+        else {
+            dAlClength = 1
         }
 
         // splits the color variables and stores their lengths (used later for checks when clearing colors)
@@ -145,17 +170,24 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // calls the gradientCheck to set the color variables/border
         gradientCheck(defaultTitleColor, "title");
-        gradientCheck(defaultSupportColors, "artist");
-        gradientCheck(defaultSupportColors, "album");
+        gradientCheck(defaultTitleColor, "shaa");
+        gradientCheck(defaultArtistColor, "artist");
+        gradientCheck(defaultArtistColor, "album");
         gradientCheck(defaultProgressColor, "bar");
         gradientCheck(defaultBorderColor, "spinner");
     
         // gets the timeout duration to hide player
         playerTimeout = (Config.playerTimeout * 1000);
 
+        // gets the SHAA-compat status
+        shaaCompat = (Config.shaaCompat);
+
+        // runs the compat check to resize the player if necessary
+        shaaCompatCheck();
+
         // sets a constant for the max size the info fields can be (removes the padding and image size from player size)
         // since there's a 12px gap (same as padding), this only removes 1 padding, the gap basically acts as the other one
-        maxInfoSize = (420 - (90 * 0.9) - 12);
+        maxInfoSize = (420 - (90 * 0.9) - 12); // 327 by default
 
         // defines the max size for the info fields (text, progress container (bar + timer))
         document.documentElement.style.setProperty("--maxInfoWidth", maxInfoSize + "px");
@@ -246,7 +278,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     lastTrackID = data.id;
 
                     // list of elements to fade out and in
-                    const fadeElements = [title, artist, album, cover, timer]
+                    const fadeElements = [title, shaa, artist, album, cover, timer]
 
                     // goes through each element in the list
                     fadeElements.forEach(element => {
@@ -262,6 +294,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         // grabs the text contents from the data file and turns into elements (uses "" if not found)
                         artistElement.textContent = data.artist || "";
                         albumElement.textContent = data.album || "";
+                        shaaElement.textContent = data.shaa || "";
 
                         // grabs the album image link, turns into cover picture
                         cover.src = data.cover;
@@ -308,17 +341,21 @@ document.addEventListener("DOMContentLoaded", () => {
                     gradientCheck(data.borderColor, "spinner");
                 }
                 // if there's a progressColor (progress bar)
-                else if (data.progressColor) {
+                if (data.progressColor) {
                     gradientCheck(data.progressColor, "bar");
                 }
-                // if there's a supportColor (artist/album text)
-                else if (data.supportColor) {
-                    gradientCheck(data.supportColor, "artist");
-                    gradientCheck(data.supportColor, "album");
+                // if there's an artistColor 
+                if (data.artistColor) {
+                    gradientCheck(data.artistColor, "artist");
+                }
+                // if there's an albumColor
+                if (data.albumColor) {
+                    gradientCheck(data.albumColor, "album");
                 }
                 // if there's a titleColor (song text)
-                else if (data.titleColor) {
+                if (data.titleColor) {
                     gradientCheck(data.titleColor, "title");
+                    gradientCheck(data.titleColor, "shaa");
                 }
             }
             // if the data type is "progress" (meaning SBO flagged a discrepency in the song progress, but nothing else changed)
@@ -388,6 +425,10 @@ document.addEventListener("DOMContentLoaded", () => {
         <div class="text-wrapper">
             <div class="title" id="title"></div>
         </div>
+        <!-- the text wrapper for the SHAA field -->
+        <div class="text-wrapper">
+            <div class="shaa" id="shaa"></div>
+        </div>
         <!-- the text wrapper for the artist field -->
         <div class="text-wrapper">
             <div class="artist" id="artist"></div>
@@ -410,17 +451,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
 <!-- svg element used to "cut out" the fake border element so it looks like a border but acts as a box (better for animations)
     these measurements should be identical to the white box below, they're just the fakeBorder's measurements -->
-<svg width="454px" height="124px">
+<svg id="playerCutoutSvg" width="454px" height="124px">
     <defs>
         <!-- the mask's ID -->
         <mask id="playerCutout">
             <!-- the white rectangle is the area that will be visible (should match the fake border's size)
                 x,y are position, rx,ry are corner rounding numbers / the white's x and y should be 0, so it's aligned with the fakeBorder
                 black's x and 5 should match the border thickness you're aiming for (5px borders = 5,5) -->
-            <rect x="0" y="0" width="454px" height="124px" rx="18" ry="18" fill="white"></rect>
+            <rect id="cutoutOuter" x="0" y="0" width="454px" height="124px" rx="18" ry="18" fill="white"></rect>
             <!-- the black rectangle is the player's area, which will be cut out from the fake border box to make it transparent (so player can be seen)
                 as such, the sizes should match player *including* its padding (currently 12px, so 420 + 12 + 12 = 444px) for both width and height -->
-            <rect x="5" y="5" width="444px" height="114px" rx="15" ry="15" fill="black"></rect>
+            <rect id="cutoutInner" x="5" y="5" width="444px" height="114px" rx="15" ry="15" fill="black"></rect>
         </mask>
     </defs>
 </svg>
@@ -634,7 +675,7 @@ body {
 }
 
 /* all text field-wide configs */
-.title, .artist, .album {
+.title, .artist, .album, .shaa {
     position: relative;
     /* lets the text overflow, but clips the overflowed portion */
     text-overflow: clip;
@@ -673,6 +714,16 @@ body {
 
 /* artist and album fields */
 .artist .album {
+    /* makes the text scale to fit without restrictions */
+    width: auto;
+    max-width: none;
+    /* the support text's styling (matches the title now, can be changed) */
+    font-weight: bold;
+    font-style: italic;
+}
+
+/* SHAA field */
+.shaa {
     /* makes the text scale to fit without restrictions */
     width: auto;
     max-width: none;
@@ -827,6 +878,76 @@ body {
 <body>
 <script>
 
+// function to check if the SHAA compatibility has been enabled (after load)
+function shaaCompatCheck() {
+    
+    // variables for height and width (adds the config-based modifiers, positive or negative)
+    let maxWidth = (454 + playerXmod);
+    let maxHeight = (124 + playerYmod);
+
+    // updates the width for the text fields
+    maxInfoSize = (maxInfoSize + playerXmod);
+
+    // if SHAA compatibility is enabled
+    if (shaaCompat) {
+        // adds 30 to max height
+        maxHeight = (maxHeight + 30);
+    }
+
+    // sets the height for all 3 svg-related pieces
+    document.getElementById("playerCutoutSvg").setAttribute("height", `${maxHeight}px`);
+    document.getElementById("cutoutOuter").setAttribute("height", `${maxHeight}px`);
+    document.getElementById("cutoutInner").setAttribute("height", `${maxHeight - 10}px`);
+    // sets the width for all 3 svg-related pieces
+    document.getElementById("playerCutoutSvg").setAttribute("width", `${maxWidth}px`);
+    document.getElementById("cutoutOuter").setAttribute("width", `${maxWidth}px`);
+    document.getElementById("cutoutInner").setAttribute("width", `${maxWidth - 10}px`);
+
+    // sets the height for all non-svg elements
+    document.getElementById("background").style.height = `${maxHeight - 6}px`;
+    document.getElementById("backgroundCover").style.height = `${maxHeight - 6}px`;
+    document.getElementById("player").style.height = `${maxHeight - 30}px`;
+    document.getElementById("fakeBorder").style.height = `${maxHeight - 3}px`;
+    // sets the width for all non-svg elements
+    document.getElementById("background").style.width = `${maxWidth - 6}px`;
+    document.getElementById("backgroundCover").style.width = `${maxWidth - 6}px`;
+    document.getElementById("player").style.width = `${maxWidth - 30}px`;
+    document.getElementById("fakeBorder").style.width = `${maxWidth - 3}px`;
+
+    // border element (saves as constant because it needs multiple changes)
+    const spinnerElement = document.getElementById("spinner");
+
+    // larger user-configured modifier
+    let largerMod = Math.max(playerXmod, playerYmod)
+
+    // sets both the spinner's width and height to the size of hte larger modifier (since the intention is to have a square)
+    spinnerElement.style.height = `${500 + largerMod}px`;
+    spinnerElement.style.width = `${500 + largerMod}px`;
+
+    // fakeborder size def
+    let fakeBorderX = 0;
+    let fakeBorderY = 0;
+
+    // grabs the actual values
+    fakeBorderX = parseFloat(document.getElementById("fakeBorder").style.width);
+    fakeBorderY = parseFloat(document.getElementById("fakeBorder").style.height);
+
+    // sets the top and left locations of the spinner (calculated, check the spinner definition for more details on how)
+    spinnerElement.style.top = `${(fakeBorderY / 2) - ((500 + largerMod) / 2)}px`;
+    spinnerElement.style.left = `${(fakeBorderX / 2) - ((500 + largerMod) / 2)}px`;
+
+    // if SHAA compatibility is enabled
+    if (shaaCompat) {
+        // sets the display to flex (shows the text)
+        document.getElementById("shaa").style.display = "flex";
+    }
+    // SHAA compat is off
+    else {
+        // disables the SHAA field (blocks display)
+        document.getElementById("shaa").style.display = "none";
+    }
+}
+
 // check if any fields exceed the player size (whether they should scroll)
 function checkTextSize(element) {
 
@@ -974,6 +1095,18 @@ function playerHider() {
 // function to check if gradient effect should be applied (checks if more than 1 color is passed, creates a dynamic color gradient)
 function gradientCheck(colorList, elementName) {
 
+    // gets the passed element and stores as local constant
+    const passedElement = document.getElementById(elementName);
+
+    // if the element is the SHAA field
+    if (elementName == "shaa") {
+        // checks if SHAA compatibility is disabled
+        if (getComputedStyle(passedElement).display === "none") {
+            // stops running this function (shouldn't touch a field that's not supposed to be visible)
+            return;
+        }
+    }
+
     // if the color "list" is actually a string (when it's 1 color or when read via config)
     if (typeof colorList === "string") {
         // checks if there's a comma (multiple colors)
@@ -1029,9 +1162,6 @@ function gradientCheck(colorList, elementName) {
             KFcolors.push(firstColor)
         }
     }
-
-    // gets the passed element and stores as local constant
-    const passedElement = document.getElementById(elementName)
 
     // if the parameter was "spinner" (border element)
     if (elementName === "spinner") {
@@ -1090,34 +1220,44 @@ function gradientCheck(colorList, elementName) {
         if (KFcolors === "default") {
             // user inform
             console.log("Clearing", elementName, "color(s)");
-            // if the passed element is title
-            if (elementName === "title") {
+
+            // if the passed element is title (or SHAA)
+            if (elementName === "title" || elementName == "shaa") {
                 // if the config has more than 1 color stored
-                console.log(dTClength)
                 if (dTClength > 1) {
-                    console.log("I'm there!")
                     // sets the color to default from config
                     passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${defaultTitleColor})`;
                 }
-                // if there's less than 1 color
+                // if there's not more than 1
                 else {
-                    console.log("I'm here!")
                     // sets the color to default or white, if unable to use
                     passedElement.style.backgroundColor = `${defaultTitleColor}`;
                 }
             }
-            // if the passed element is artist or album
-            else if (elementName === "artist" || elementName === "album") {
-                if (dSClength > 1) {
+            // if the passed element is artist
+            else if (elementName === "artist") {
+                if (dArClength > 1) {
                     // sets the color to default from config
-                    passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${defaultSupportColors})`;          
+                    passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${defaultArtistColor})`;          
                 }
-                // if there's less than 1 color
+                // if there's not more than 1
                 else {
                     // sets the color to default or white, if unable to use
-                    passedElement.style.backgroundColor = defaultSupportColors || "#ffffff";
+                    passedElement.style.backgroundColor = defaultArtistColor || "#ffffff";
                 }
             }
+            // if the passed element is album
+            else if (elementName == "album") {
+                if (dAlClength > 1) {
+                    // sets the color to default from config
+                    passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${defaultAlbumColor})`;
+                }
+                // if there's not more than 1
+                else {
+                    passedElement.style.backgroundColor = defaultAlbumColor || "#ffffff";
+                }
+            }
+
             // if the passed element is bar and it has more than 1 color in config
             else if (elementName === "bar") {
                 // if the player is not paused, continues to check colors
