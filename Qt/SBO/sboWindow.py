@@ -741,7 +741,7 @@ class FontDemoWindow(QDialog):
         self.bottomLayout.addWidget(self.closeDemo, 3, 0, 1, 3, alignment=Qt.AlignmentFlag.AlignCenter)
         # the close button
 
-        QTimer.singleShot(0, self.fontChanger(self.parentWindow.selectedFont))
+        QTimer.singleShot(0, lambda: self.fontChanger(self.parentWindow.selectedFont))
         # sets the preview font by running the function once
         self.resize(750, 550)
         # sets the window to the "correct" size by default
