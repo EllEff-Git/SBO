@@ -81,6 +81,11 @@ sboConfig = {}
 
 cmdConfigExePath = os.path.join(qtFolderPath, "cmdWindow", "cmdWindow.exe")
 """The full path to the bot command config program exe (SBO/runtime/Qt/cmdWindow/cmdWindow.exe)"""
+botConfigExePath = os.path.join(qtFolderPath, "botWindow", "botWindow.exe")
+"""The full path to the bot function config program exe (SBO/runtime/Qt/botWindow/botWindow.exe)"""
+
+fontFolderPath = os.path.join(configFolderPath, "fonts")
+"""The folder path that should contain any font files"""
 
 ### Spotify Token Cache ###
 
@@ -133,10 +138,12 @@ skipFuncCfgWin = False
 """Whether to skip the function configuration window automatically (boolean)"""
 skipSBOcfgWin = False
 """Whether to skip the SBO configuration window automatically (boolean)"""
+renderOverlay = True
+"""Whether to host/render the overlay (boolean)"""
 enableBot = False
 """Whether to enable the Twitch Bot (boolean)"""
 skipRequired = False
-"""Whether to skip the required items check"""
+"""Whether to skip the required items check (boolean)"""
 DSIoverride = False
 """Whether DSI is active and should override SBO's Spotify logic (boolean)"""
 
@@ -184,6 +191,13 @@ colorFunctionHexMap = {
     "Bar Color": barColorHex
 }
 """A map of the color commands and what their corresponding hex variable is"""
+
+
+
+if not os.path.exists(fontFolderPath):
+# if the font folder doesn't exist yet
+    os.makedirs(fontFolderPath, exist_ok=True)
+    # forms the font directory (and the directories before it)
 
 
 
@@ -432,7 +446,7 @@ class starterWindow(QWidget):
 
     def funcConfigRead(self):
         """Function to read the functional configuration"""
-        global webHostPortBot, webHostPortWS, enableBot, consoleLength, skipRequired
+        global webHostPortBot, webHostPortWS, renderOverlay, enableBot, consoleLength, skipRequired
         # global -> local
 
         webHostPortBot = (int(funcConfig.get("httpPort", 6868)) + 1)
@@ -441,9 +455,11 @@ class starterWindow(QWidget):
         # adds 1 to the SBO-Bot to get the SBO-WS port (default: 6870)
         consoleLength = int(funcConfig.get("consoleLength", 25))
         # gets the length of the console
-        enableBot = funcConfig.get("enableBot", False)
+        renderOverlay = bool(funcConfig.get("renderOverlay", True))
+        # gets the overlay rendering boolean
+        enableBot = bool(funcConfig.get("enableBot", False))
         # gets the Twitch bot enabling boolean
-        skipRequired = funcConfig.get("skipRequiredCheck", False)
+        skipRequired = bool(funcConfig.get("skipRequiredCheck", False))
         # gets the required item skip check
 
         if skipRequired and DSIoverride:
@@ -855,7 +871,7 @@ class MainWindow(QMainWindow):
         self.openFuncConfigButton.setToolTip("Enter the config")
         # tooltip
 
-        self.openFuncConfigButton.clicked.connect(self.openFuncConfigWin)
+        self.openFuncConfigButton.clicked.connect(self.openConfigSelection)
         # connects the button click to the detail display
         self.openFuncConfigButton.hide()
         # hides the button on start
@@ -890,16 +906,17 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(1000, lambda: self.controlChecks("Startup", True, True))
         # runs the controlChecks function to enable all the buttons
 
+        self.configWindow = ConfigWindow(self)
+        # instantiates the configuration window class 
+        self.configWindow.hide()
+        # hides by default
+
 
 
 ### Update Checker ###
 
     def checkUpdate(self):
         """Function that checks if there's a new version of the program"""
-
-        updateAvailable = 0
-        # update check, defaults to 0
-        # 0 = no update, 1 = update, 2 = program newer than github
 
         try:
         # tries to get tags
@@ -918,56 +935,13 @@ class MainWindow(QMainWindow):
                 # grabs the 0th element's name (latest)
                 latestTag = latestTagRaw.replace("v", "").strip()
                 # strips the v(ersion) identifier, cleans up
-                latestList = latestTag.split(".")
-                # splits the latest tag into a list of date elements (year num, month, day, hour/min)
-                currentList= self.version.split(".")
-                # splits the current tag into a list of date elements
+                latestVersion = tuple(int(x) for x in latestTag.split("."))
+                # splits the latest tag into a tuple of date elements (year num, month, day, hour/min)
+                installedVersion = tuple(int(x) for x in self.version.split("."))
+                # splits the current tag into a tuple of date elements
 
-                if latestList[0] == currentList[0]:
-                # if the year elements are the same
-                    if latestList[1] == currentList[1]:
-                    # if the month elements are the same
-                        if latestList[2] == currentList[2]:
-                        # if the day elements are the same
-                            if latestList[3] == currentList[3]:
-                            # if the hour elements are the same
-                                updateAvailable = 0
-                                # sets to 0 (no update)
-                            elif latestList[3] > currentList[3]:
-                            # if the latest is newer than current
-                                updateAvailable = 1
-                                # sets the boolean to True
-                            else:
-                            # current is newer than latest
-                                updateAvailable = 2
-                                # sets the check to 2
-                        elif latestList[0] > currentList[0]:
-                        # if the latest is newer than current
-                            updateAvailable = 1
-                            # sets the boolean to True
-                        else:
-                        # current is newer than latest
-                            updateAvailable = 2
-                            # sets the check to 2
-                    elif latestList[1] > currentList[1]:
-                    # if the latest is newer than current
-                        updateAvailable = 1
-                        # sets the boolean to True
-                    else:
-                    # current is newer than latest
-                        updateAvailable = 2
-                        # sets the check to 2
-                elif latestList[0] > currentList[0]:
-                # if the latest is newer than current
-                    updateAvailable = 1
-                    # sets the boolean to True
-                else:
-                # current is newer than latest
-                    updateAvailable = 2
-                    # sets the check to 2
-
-                if updateAvailable == 1:
-                # if there's a newer version (higher number)
+                if latestVersion > installedVersion:
+                # latest is higher than current -> update
                     latestURL = "https://github.com/EllEff-Git/SBO/releases/latest"
                     # the URL to set
                     self.versionTag.setText(
@@ -978,7 +952,7 @@ class MainWindow(QMainWindow):
                         f'</a>'
                     )
                     # updates text to include a prompt + link to the newest update
-                elif updateAvailable == 2:
+                elif latestVersion < installedVersion:
                 # if the current is higher than the latest github release (test build)
                     self.versionTag.setText(f"SBO v{self.version}\nBleeding Edge!")
                     # you should never see this, this is a testing tag
@@ -1030,21 +1004,12 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(500, self.autoScroll)
         # runs the autoscroller after half a second to let the text sit
 
-### Functional Configuration Window ###
+### Configuration Window ###
 
-    def openFuncConfigWin(self):
-        """Function to open the functional config"""
-        def funcThread():
-            """Function to run the config and wait for it to close"""
-
-            funcConfigProc = subprocess.Popen([funcConfigExePath], creationflags=subprocess.CREATE_NO_WINDOW)
-            # runs the functionality configurator asynchronously
-            funcConfigProc.wait()
-            # waits for the process to end (blocking)
-            self.controlChecks("Config", True, False)
-            # sends a signal to the bot to reload the config file
-        threading.Thread(target=funcThread, daemon=True).start()
-        # starts a thread for the configuration window (so it doesn't block everything with .wait())
+    def openConfigSelection(self):
+        """Function to open the configuration selection dialog window"""
+        self.configWindow.show()
+        # shows the window to open configs
 
 ### Auto-Scroll ###
 
@@ -1131,6 +1096,156 @@ class MainWindow(QMainWindow):
 
 
 
+
+
+### Config Dialog ###
+
+class ConfigWindow(QDialog):
+    """Window class to show the configuration selection"""
+    def __init__(self, parentWindow: MainWindow):
+    # init
+        super().__init__(parent = parentWindow)
+        # init 2
+
+        self.mainIcon = iconPath
+        # the directory containing the program icon png (built-in)
+
+        self.setMinimumSize(550, 300)
+        # sets the window size 
+        self.setWindowIcon(QIcon(self.mainIcon))
+        # the window icon
+        self.setWindowTitle("SBO Configuration")
+        # sets title name
+
+        self.parentWindow = parentWindow
+        # stores parent window (main win) in self
+        self.activeConfig = None
+        # stores the currently active configuration window
+    
+    ### Buttons ###
+
+        self.mainLayout = QGridLayout()
+        # base layout
+        self.setLayout(self.mainLayout)
+        # sets the layout
+
+        self.taskLabel = QLabel("Select a configuration to open")
+        # label
+
+        self.configLayout = QHBoxLayout()
+        # horizontal layout
+        self.mainLayout.addLayout(self.configLayout, 1, 0)
+        # adds the config layout to the main
+
+        self.funcConfigButton = QPushButton("Functional\nConfiguration")
+        self.funcConfigButton.setFixedSize(120, 60)
+        self.funcConfigButton.clicked.connect(lambda: self.configWindowStart("Functional"))
+        # func config
+        self.sboConfigButton = QPushButton("SBO Visual\nConfiguration")
+        self.sboConfigButton.setFixedSize(120, 60)
+        self.sboConfigButton.clicked.connect(lambda: self.configWindowStart("SBO"))
+        # sbo config
+        self.botConfigButton = QPushButton("Twitch Bot\nConfiguration")
+        self.botConfigButton.setFixedSize(120, 60)
+        self.botConfigButton.clicked.connect(lambda: self.configWindowStart("Bot"))
+        # bot config 
+        self.cmdConfigButton = QPushButton("Twitch Command\nConfiguration")
+        self.cmdConfigButton.setFixedSize(120, 60)
+        self.cmdConfigButton.clicked.connect(lambda: self.configWindowStart("Command"))
+        # command config
+
+        self.hideWindowButton = QPushButton("Close Window")
+        self.hideWindowButton.setFixedSize(120, 45)
+        self.hideWindowButton.clicked.connect(lambda: (self.hide(), self.parentWindow.controlChecks("Config", True, False)))
+        # closes the config launcher and sends a signal to the main window to reload configs
+
+        self.configLayout.addWidget(self.funcConfigButton)
+        self.configLayout.addWidget(self.sboConfigButton)
+        self.configLayout.addWidget(self.botConfigButton)
+        self.configLayout.addWidget(self.cmdConfigButton)
+        # adds all the config buttons
+        self.mainLayout.addWidget(self.taskLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.mainLayout.addWidget(self.hideWindowButton, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the button to "close"
+
+### Threads ###
+
+    def funcThread(self):
+        """Function to run the functional config"""
+
+        funcConfigProc = subprocess.Popen([funcConfigExePath], creationflags=subprocess.CREATE_NO_WINDOW)
+        # runs the functionality configurator asynchronously
+        funcConfigProc.wait()
+        # waits for the process to end (blocking)
+        self.activeConfig = None
+        # resets to none
+    
+    def sboThread(self):
+        """Function to run the SBO visual config"""
+
+        sboConfigProc = subprocess.Popen([sboConfigExePath], creationflags=subprocess.CREATE_NO_WINDOW)
+        # runs the SBO visual configurator asynchronously
+        sboConfigProc.wait()
+        # waits for the process to end (blocking)
+        self.activeConfig = None
+        # resets to none
+
+    def botThread(self):
+        """Function to run the bot config"""
+
+        botConfigProc = subprocess.Popen([botConfigExePath], creationflags=subprocess.CREATE_NO_WINDOW)
+        # runs the bot configurator asynchronously
+        botConfigProc.wait()
+        # waits for the process to end (blocking)
+        self.activeConfig = None
+        # resets to none
+
+    def cmdThread(self):
+        """Function to run the command config"""
+
+        cmdConfigProc = subprocess.Popen([cmdConfigExePath], creationflags=subprocess.CREATE_NO_WINDOW)
+        # runs the command configurator asynchronously
+        cmdConfigProc.wait()
+        # waits for the process to end (blocking)
+        self.activeConfig = None
+        # resets to none
+        
+### Config Run ###
+    
+    def configWindowStart(self, config: str):
+        """Function to start a configuration window"""
+        if self.activeConfig is not None:
+        # if there's an actively open config
+            self.taskLabel.setText(f"{self.activeConfig} window is open, cannot open another configuration!")
+            # sets a warning
+            return
+            # stops
+        else:
+        # no window open yet
+            self.activeConfig = config
+            # sets the config state variable to match
+            self.taskLabel.setText(f"{config} configuration window open...")
+            # sets text
+
+        if config == "Functional":
+        # called config = functional
+            threading.Thread(target=self.funcThread, daemon=True).start()
+            # starts a thread for the configuration window (so it doesn't block everything with .wait())
+        elif config == "SBO":
+        # called config = sbo
+            threading.Thread(target=self.sboThread, daemon=True).start()
+            # starts a thread for the configuration window (so it doesn't block everything with .wait())
+        elif config == "Bot":
+        # called config = (twitch) bot
+            threading.Thread(target=self.botThread, daemon=True).start()
+            # starts a thread for the configuration window (so it doesn't block everything with .wait())
+        elif config == "Command":
+        # called config = (twitch) command
+            threading.Thread(target=self.cmdThread, daemon=True).start()
+            # starts a thread for the configuration window (so it doesn't block everything with .wait())
+
+
+
 ### Webhost Socket ###
 
 def botWebHostDefiner():
@@ -1194,6 +1309,8 @@ callSong = False
 """A check to see if song() should be called regardless of song change state (due to a color change)"""
 colorUpdate = False
 """A check to see if dsiDataGrabber should send a packet regardless of song change state (due to a color change)"""
+sboFull = None
+"""The full SBO dictionary"""
 lastSBO = {}
 """Dictionary to store previous track identifiers"""
 lastSong = lastArtist = lastSongURL = None
@@ -1219,22 +1336,25 @@ class SpotifyQueue:
         self.spCallQueueTracker = set()
         # creates an empty set to clone the API calls to keep track of the length
 
-    def queueManager(self, call: str, URI: str = None):
+    def queueManager(self, call: str, URI: str = None, query:str = None):
         """Function to manage the queue (URI can be empty if call is a playback request or control, future can be empty if no return is expected)"""
 
         futureObj = concurrent.futures.Future()
         # creates a new future object in case the function wanted a return on data
-        nextCall = (call, URI, futureObj)
+        nextCall = (call, URI, query, futureObj)
         # creates the next call from the arguments
+        nextKey = (call, URI, query)
+        # creates the trackable tuple from just the arguments 
+        # every call makes a new Future object anyway, so they'd never match
 
         with self.spotifyLock:
         # uses a threading lock, to prevent multiple requests at once
-            if nextCall not in self.spCallQueueTracker:
-                # ensures the next call isn't already in queue (uses the set to check, since you can't check the queue directly)
+            if nextKey not in self.spCallQueueTracker:
+            # ensures the next call isn't already in queue (uses the set to check, since you can't check the queue directly)
                 self.spotifyCallQueue.put(nextCall)
                 # adds the call to the queue
-                self.spCallQueueTracker.add(nextCall)
-                # also adds the call into the set
+                self.spCallQueueTracker.add(nextKey)
+                # also adds the key into the tracker set
 
         return futureObj
         # returns the future object so the function can wait for the result
@@ -1244,12 +1364,14 @@ class SpotifyQueue:
         while True:
         # while the function is running, keeps running requests (only when it's ready, prevents multiple calls at once)
 
-            nextAPICall = self.spotifyCallQueue.get(block = True)
+            nextAPICall: tuple[str, str | None, str | None, concurrent.futures.Future] = self.spotifyCallQueue.get(block = True)
             # grabs the next call from the queue (removes it at the same time), blocks progress until there's something in the queue
-            self.spCallQueueTracker.remove(nextAPICall)
-            # deletes the 0th element (first), since that's the same element the queue stores
-            call, link, future = nextAPICall
-            # splits the queue item into its call, link and future components
+            call, link, query, future = nextAPICall
+            # splits the queue item into its call, link, potential query and future components
+            currentKey = (call, link, query)
+            # reconstructs the key used to check
+            self.spCallQueueTracker.remove(currentKey)
+            # removes the key
 
             self.controlList = ["Pause", "Resume", "Skip", "Previous"]
             # makes a list of the playback control options (these don't have special conditions and don't return anything)
@@ -1276,15 +1398,15 @@ class SpotifyQueue:
 
             elif call == "QueueQ":
             # if the call is to search for a spotify track then add to queue
-                success = self.spotifyAPICall("QueueQ", link)
-                # calls the spotifyAPICall with a queueq command and a "link" (search terms)
+                success = self.spotifyAPICall("QueueQ", link, query)
+                # calls the spotifyAPICall with a queueq command and a "link" (search terms) and a potential fallback query
 
             future.set_result(success)
             # sets the future object's return to be the success (if there's a return from the API call, it gets passed back)
             time.sleep(1)
             # waits a second before even starting next call
 
-    def spotifyAPICall(self, call:str, query:str = None):
+    def spotifyAPICall(self, call:str, query:str = None, fallbackQuery:str = None):
         """Function to perform Spotify API calls and handle errors gracefully"""
 
         tokenRefresh = False
@@ -1328,19 +1450,29 @@ class SpotifyQueue:
                 elif call == "Queue":
                 # if the call is to add a song to queue
                     try:
+                        main.add_to_queue(query)
+                        # pushes the URI into the Spotify queue
+
                         package = main.track(query)
                         # sends the URI to Spotify to get the track's details
                         if package:
                         # ensures the track information is received first
+
                             trackName = package.get("name")
                             # gets the name of the track first
                             trackArtistDict = package.get("artists")[0]
                             # gets the dictionary of the first artist
                             trackArtist = trackArtistDict.get("name")
                             # gets the artist name
-                            main.add_to_queue(query)
-                            # pushes the URI into the Spotify queue
-                            success = f"Queued: {trackName} by {trackArtist}"
+
+                            durationMS: int = package.get("duration_ms", 0)
+                            # gets the length of the song
+                            mins, secs = divmod((durationMS // 1000), 60)
+                            # splits the duration into minutes and seconds
+                            durationString = f"{mins}:{secs:02d}"
+                            # turns the milliseconds into seconds, divides by 60 to get the minutes and seconds, turns into string
+
+                            success = f"Queued: {trackName} by {trackArtist} ({durationString})"
                             # creates a string from the track and artist
                             startWin.mainWindow.labelSwap.emit(f"[spAPI]: {success}", 2)
                             # prints a confirm message with the song name
@@ -1355,28 +1487,64 @@ class SpotifyQueue:
                     try:
                         package = main.search(query, limit=1, type="track")
                         # searches Spotify records for a song matching the passed argument ("URI" is a query formed prior)
-                        if package:
-                        # ensures the track information is received first
-                            tracks = package.get("tracks")
-                            # goes one level further
-                            track = tracks.get("items")[0]
-                            # gets the only track in this dictionary 
-                            # (tracks has all the query data, items has all the matching tracks, we're just searching for 1 (limit))
+                        tracks = package.get("tracks") if package else None
+                        # tries to grab the track dict, if the package is returned
+
+                        trackList = tracks.get("items")
+                        # gets the list of items (tracks)
+                        if len(trackList) == 0:
+                        # if the track doesn't contain anything
+                            if fallbackQuery: 
+                            # re-query (if there's the option to)
+                                fbPackage = main.search(fallbackQuery, limit=1, type="track")
+                                # re-calls the same endpoint, uses the fallback query passed (if one exists)
+                                if fbPackage:
+                                # checks if the return exists
+                                    tracks = fbPackage.get("tracks")
+                                    # grabs the nested dict
+                                    trackList = tracks.get("items")
+                                    # gets the list of items (tracks)
+                                    if len(trackList) == 0:
+                                    # if the track doesn't contain anything
+                                        raise Exception("No matching songs found!")
+                                        # calls its own exception to trigger the fail state right away
+
+                        track = trackList[0]
+                        # gets the only track in this dictionary 
+                        # (tracks has all the query data, items has all the matching tracks, we're just searching for 1 (limit))
+                        trackURI = track.get("uri")
+                        # gets the resulting URI
+                        main.add_to_queue(trackURI)
+                        # pushes the track URI into the Spotify queue
+
+                        try:
+                        # wraps this separately to not get an error message just beacuse this part failed (this is just QoL stuff anyway)
                             trackName = track.get("name")
                             # gets the name of the track first
                             trackArtistDict = track.get("artists")[0]
                             # gets the dictionary of the first artist
                             trackArtist = trackArtistDict.get("name")
                             # gets the artist name
-                            trackURI = track.get("uri")
-                            # gets the resulting URI
-                            main.add_to_queue(trackURI)
-                            # pushes the track URI into the Spotify queue
-                            success = f"Queued: {trackName} by {trackArtist}"
+
+                            durationMS: int = track.get("duration_ms", 0)
+                            # gets the length of the song
+                            mins, secs = divmod((durationMS // 1000), 60)
+                            # splits the duration into minutes and seconds
+                            durationString = f"{mins}:{secs:02d}"
+                            # turns the milliseconds into seconds, divides by 60 to get the minutes and seconds, turns into string
+
+                            success = f"Queued: {trackName} by {trackArtist} ({durationString})"
                             # creates a string from the track and artist
                             startWin.mainWindow.labelSwap.emit(f"[spAPI]: {success}", 2)
                             # prints a confirm message with the song name
-                    except:
+                        except:
+                        # error during the post-queue part
+                            success = f"Queued: a song!"
+                            # uses a preset, dull string
+                            startWin.mainWindow.labelSwap.emit(f"[spAPI]: Queued an unknown song (unpacking error after queueing)", 2)
+                            # user inform
+                    except Exception:
+                    # any error at any point (grab into empty dict, null values...)
                         startWin.mainWindow.labelSwap.emit("[spAPI]: Queue failed", 2)
                         # prints a fail message
                         success = f"Unable to queue a matching song"
@@ -1477,9 +1645,12 @@ class SpotifyQueue:
                     # expected to print just about every 3600 seconds (1h)
                     tokenRefresh = True
                     # sets the tokenRefresh mode to true so it prints the token text on success
-                elif isinstance(error, requests.exceptions.ReadTimeout):
-                # if the error is a read timeout (sort of random)
-                    startWin.mainWindow.labelSwap.emit(f"[spAPI]: Spotify API timeout, retrying in 5 seconds ({attempt+1}/3)", 2)
+                elif isinstance(error, requests.exceptions.ReadTimeout) or isinstance(error, requests.exceptions.Timeout):
+                # if the error is a (read) timeout (sort of random, typically indicative of server downtime/spotty local server performance)
+                    startWin.mainWindow.labelSwap.emit(f"[spAPI]: Spotify API timeout, retrying in 10 seconds ({attempt+1}/3)", 2)
+                    # user inform
+                    internalError = True
+                    # requests timing out typically means their end is being slow/broken
                     time.sleep(2)
                     # sleeps for 2 seconds (because there's a function-wide 3-second cooldown added on top)
                 elif isinstance(error, SpotifyException) and error.http_status == 403:
@@ -1515,7 +1686,7 @@ class SpotifyQueue:
                     # prints user inform
                 elif attempt == 2 and internalError:
                 # if it's the last attempt and fails due to internal error
-                    startWin.mainWindow.labelSwap.emit(f"All attempts to reconnect to Spotify API failed due to Spotify's internal error", 4)
+                    startWin.mainWindow.labelSwap.emit(f"All attempts to reconnect to Spotify API failed due to inability to connect to Spotify API.\nIf your connection is stable, try again later, there may be server downtime!", 4)
                     # prints user inform
 
             time.sleep(3)
@@ -1591,7 +1762,7 @@ def stringCleaner(string: str):
 
 ### Bot Commands ###
 
-def botCommand(command: str, socket: socket):
+def botCommand(command: str, socket: socket.socket):
     """Helper function to pick what control function to call"""
 
     playbackCommands = {
@@ -1625,17 +1796,31 @@ def botCommand(command: str, socket: socket):
     # if the command starts with "QueueQ"
         x, query = command.split(" ", 1)
         # splits the command into scrap (command) and the query to pass
-        if "," in query:
-        # if there's a comma in the query
-            songQuery, artistQuery = query.split(",", 1)
+        fallbackQuery = None
+        # variable to store a potential fallback to try
+
+        if ", " in query:
+        # if there's a comma in the query (with a space after - prevents things like "40,000" being seen as a split)
+            songQuery, artistQuery = query.split(", ", 1)
             # splits the query into the song and artist parts by the comma
             formedQuery = f"track:{songQuery.strip()} artist:{artistQuery.strip()}"
             # forms the actual query from the given segments
-        else:
-        # if there's no comma
+            fallbackQuery = f"{songQuery.strip()} {artistQuery.strip()}"
+            # uses the unformatted version as a fallback to try
+        elif " by " in query:
+        # if there's " by " in the query (has to include the spaces)
+            songQuery, artistQuery = query.rsplit(" by ", 1)
+            # splits the query into the song and artist parts by the " by " keyword, scanned right-to-left
             formedQuery = f"track:{query.strip()}"
-            # forms a smaller query
-        queueqTrack(formedQuery, socket)
+            # the first attempt is literally just the query on its own (the amount of songs that have "<something> by me" may just exceed user inputs)
+            fallbackQuery = f"track:{songQuery.strip()} artist:{artistQuery.strip()}"
+            # forms the actual query from the given segments (leaves out the by)
+        else:
+        # if there's no comma/by
+            formedQuery = f"track:{query.strip()}"
+            # forms a query from just the song (still has a decent success rate)
+
+        queueqTrack(formedQuery, socket, fallbackQuery)
         # calls queueqTrack to send a search query with given terms
 
     elif command.startswith(("Song Color:", "Artist Color:", "Album Color:", "Bar Color:", "Overlay Color:")):
@@ -1655,17 +1840,17 @@ def botCommand(command: str, socket: socket):
             method, color = args.split(" ", 1)
             # splits the arguments by the first space
             if " " in color:
-                # if color string has a space
+            # if color string has a space
                 color, hexCode = color.split(" ", 1)
                 # takes the hex code as the last parameter
             else:
-                # if color doesn't have a space (remove/get)
+            # if color doesn't have a space (remove/get)
                 hexCode = None
                 # sets hexCode to None
             colorManager(method, socket, color, hexCode)
             # calls colorWriter with the given arguments
-        except Exception as err:
-            # if the split fails
+        except:
+        # if the split fails
             errorMsg = f"Error parsing {command}, please check parameters and try again"
             # creates a string to send back to bot
             socket.sendall(errorMsg.encode("utf-8"))
@@ -1696,25 +1881,25 @@ def previous():
     spotifyQueueInstance.queueManager("Previous")
     # calls the queue manager to add a previous call to the call queue
 
-def queueTrack(link: str, client_socket):
+def queueTrack(link: str, replySocket: socket.socket):
     """Queues a given song via Spotify link"""
     futureQT = spotifyQueueInstance.queueManager("Queue", link)
     # calls the queue manager to add a link to the play queue
-    trackName = futureQT.result()
+    trackName:str = futureQT.result()
     # gets the result via future object
-    client_socket.sendall(trackName.encode("utf-8"))
+    replySocket.sendall(trackName.encode("utf-8"))
     # sends the track name to Bot to reply with
 
-def queueqTrack(query: str, client_socket):
+def queueqTrack(query: str, replySocket: socket.socket, fallbackQuery:str = None):
     """Queues a song matching given query"""
-    futureQT = spotifyQueueInstance.queueManager("QueueQ", query)
+    futureQT = spotifyQueueInstance.queueManager("QueueQ", query, fallbackQuery)
     # calls the queue manager to add a search query to potentially queue a song
-    trackName = futureQT.result()
+    trackName:str = futureQT.result()
     # gets the result via future object
-    client_socket.sendall(trackName.encode("utf-8"))
+    replySocket.sendall(trackName.encode("utf-8"))
     # sends the track name to Bot to reply with
 
-def playlistInfo(link: str, client_socket):
+def playlistInfo(link: str, replySocket: socket.socket):
     """Requests playlist information via Spotify link"""
     if link != "Not a playlist":
     # if the current link is NOT set to not a playlist (SBO has detected it's not a playlist and thus set it to that string) 
@@ -1770,7 +1955,7 @@ def playlistInfo(link: str, client_socket):
     else:
         playlistNameStr = f"Not currently listening to a playlist"
         # if the playlist link is set to a "not a playlist" string, it means the track is being listened to off-playlist
-    client_socket.sendall(playlistNameStr.encode("utf-8"))
+    replySocket.sendall(playlistNameStr.encode("utf-8"))
     # sends the response back to SBO-Bot to reply with in chat
 
 
@@ -1844,7 +2029,7 @@ def colorLoader() -> dict:
 
 
 
-def colorManager(command:str, client_socket, color:str, hexCode:str = None):
+def colorManager(command:str, replySocket: socket.socket, color:str, hexCode:str = None):
     """Function to manipulate custom colors stored in colorStrings.json"""
     global customColors
     # global -> local
@@ -1916,14 +2101,14 @@ def colorManager(command:str, client_socket, color:str, hexCode:str = None):
             colorStr = f"{command} is not a valid command"
             # sets the string to error
             
-        client_socket.sendall(colorStr.encode("utf-8"))
+        replySocket.sendall(colorStr.encode("utf-8"))
         # sends the color string back to bot
 
     except:
     # if it fails (happens occasionally with incorrect parameters, connection errors, etc)
         failStr = f"Failed to manipulate custom color, sorry!"
         # generic fail message
-        client_socket.sendall(failStr.encode("utf-8"))
+        replySocket.sendall(failStr.encode("utf-8"))
         # bot expects a response, sends generic one
         return
         # doesn't progress to writing the color file (if it did, it'd likely delete everything)
@@ -2182,7 +2367,7 @@ def dsiDataGrabber():
 
                     data["Last Song"] = lastSong
                     data["Last Artist"] = lastArtist
-                    data["Last URI"] = lastSongURL
+                    data["Last Song URL"] = lastSongURL
                     # adds entries
 
                     data["Song Color"] = songColorHex
@@ -2234,7 +2419,7 @@ def dsiDataGrabber():
 def song():
     """The function that handles all song data gathering and parsing, as well as pushing to the websocket via text"""
     global currentInfo, trackCounter, oldCount, songColorHex, artistColorHex, albumColorHex, barColorHex, overlayColorHex
-    global lastSBO, lastSong, lastArtist, lastSongURL, updateProgress, csPlaylistID
+    global lastSBO, lastSong, lastArtist, lastSongURL, updateProgress, csPlaylistID, sboFull
     # pulls "some" global variables to local
 
     while True:
@@ -2341,12 +2526,12 @@ def song():
             # stores the opposite of playstate (if playing, paused = false, if not, paused = true)
 
             if not csPlayState:
-                # if the song is paused
+            # if the song is paused
                 songNameList.append("Paused on:")
                 # adds the "paused on" text to list
 
-            elif trackCounter != oldCount and csPlayState:
-                # checks if the song has changed (and song is playing, this way won't activate on paused songs and cause flashing elements)
+            elif (trackCounter != oldCount) and csPlayState:
+            # checks if the song has changed (and song is playing, this way won't activate on paused songs and cause flashing elements)
 
                 oldCount = trackCounter
                 # updates the song counter
@@ -2399,7 +2584,7 @@ def song():
                 # gets only the playlist URL (only one in there, unsure why it's a dictionary but ok Spotify)
             
             else:
-                # if there's no playlist
+            # if there's no playlist
                 csPlaylistURL = "No playlist"
                 csPlaylist = "Not listening to a playlist"
 
@@ -2418,34 +2603,46 @@ def song():
             now = int(time.time())
             # saves the current time (SBO-WS can read this and see if it should do anything)
 
+            if songChanged and sboFull:
+            # if the song has changed and the dictionary is defined (otherwise breaks on first run)
+                lastSong = sboFull["Song Raw"]
+                # sets the previous song to match
+                lastArtist = sboFull["Artist Name"]
+                # sets the previous artist to match
+                lastSongURL = sboFull["Spotify URL"]
+                # sets the previous playlist URL match
+                songChanged = False
+                # shouldn't matter, since songChanged is self-contained and should default to false every loop, but just in case, sets to False
+
             sboFull = {
-                        "Playback State": True,
-                        "Song Name": sboSongName,
-                        "Artist Name": sboArtistName,
-                        "Artist URL": (csArtistURL if not isLocalSong else "A local artist"),
-                        "Album Name": sboAlbumName,
-                        "Album URL": (sboAlbumURL if not isLocalSong else "A local album"),
-                        "Spotify URL": (sboURL if not isLocalSong else "A local song"),
-                        "Spotify Image": (csCover if not isLocalSong else "https://i.imgur.com/FeUsGIz.png"),
-                        "Playlist URL": csPlaylistURL,
-                        "UNIX Start": str(csUnixStart),
-                        "UNIX End": str(csUnixEnd),
-                        "Pause State": paused,
-                        "Track ID": str(trackCounter),
-                        "Song Color": songColorHex,
-                        "Artist Color": artistColorHex,
-                        "Album Color": albumColorHex,
-                        "Bar Color": barColorHex,
-                        "Overlay Color": overlayColorHex,
-                        "Last Song": lastSong,
-                        "Last Artist": lastArtist,
-                        "Last Playlist URL": lastSongURL,
-                        "Progress Mismatch": updateProgress,
-                        "Timestamp": now,
-                        "State": " "
+                "Playback State": True,
+                "Song Name": sboSongName,
+                "Artist Name": sboArtistName,
+                "Artist URL": (csArtistURL if not isLocalSong else "A local artist"),
+                "Album Name": sboAlbumName,
+                "Album URL": (sboAlbumURL if not isLocalSong else "A local album"),
+                "Spotify URL": (sboURL if not isLocalSong else "A local song"),
+                "Spotify Image": (csCover if not isLocalSong else "https://i.imgur.com/FeUsGIz.png"),
+                "Playlist URL": csPlaylistURL,
+                "UNIX Start": str(csUnixStart),
+                "UNIX End": str(csUnixEnd),
+                "Pause State": paused,
+                "Song Raw": csName,
+                "Track ID": str(trackCounter),
+                "Song Color": songColorHex,
+                "Artist Color": artistColorHex,
+                "Album Color": albumColorHex,
+                "Bar Color": barColorHex,
+                "Overlay Color": overlayColorHex,
+                "Last Song": lastSong,
+                "Last Artist": lastArtist,
+                "Last Song URL": lastSongURL,
+                "Progress Mismatch": updateProgress,
+                "Timestamp": now,
+                "State": " "
             }
             # merges all the song/color/other information together
-        
+
         packetSender("WS", sboFull)
         # sends the packet to the websocket
 
@@ -2453,17 +2650,6 @@ def song():
         # if the Bot is on
             packetSender("Bot", sboFull)
             # sends the packet to the Bot, too
-
-        if songChanged:
-            # if the song has changed (changes after the packet update)
-            lastSong = sboSongName
-            # sets the previous song to match
-            lastArtist = sboArtistName
-            # sets the previous artist to match
-            lastSongURL = csPlaylistURL
-            # sets the previous playlist URL match
-            songChanged = False
-            # shouldn't matter, since songChanged is self-contained and should default to false every loop, but just in case, sets to False
 
         songEvent.clear()
         # clears the event queue, ready to get new requests
@@ -2546,7 +2732,7 @@ def looper():
             newSong = True
             # sets the newSong boolean to True, because the song very likely did
 
-        if (currentURI != songURI):
+        elif (currentURI != songURI):
         # if the URIs don't match
             newSong = True
             # sets the newSong boolean to True
@@ -2695,8 +2881,10 @@ def mainStart(startup:bool = True, process:str = None, restart:bool = False):
             songThread.start()
             # starts the song thread to get updated info
 
-        sbowsThread.start()
-        # starts the SBO-WS thread
+        if renderOverlay:
+        # if the overlay rendering isn't disabled
+            sbowsThread.start()
+            # starts the SBO-WS thread
 
         if enableBot:
         # if the config option to enable the bot is on (enabled by bot runner if not already)

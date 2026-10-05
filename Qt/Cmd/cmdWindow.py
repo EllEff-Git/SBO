@@ -7,23 +7,12 @@ import json, os, sys
 
 
 
-class ComConfWindow(object):
+class ComConfWindow(QMainWindow):
     """The window class"""
-    def setupUi(self, ComWindow):
+    def __init__(self):
     # setup
-        if not ComWindow.objectName():
-        # checks for a name 
-            ComWindow.setObjectName(u"ComWindow")
-            # sets the name
-        ComWindow.setMinimumSize(925, 350)
-        # sets the window size 
-        self.window = ComWindow
-        # stores a reference in self to the actual window (so that it can be closed later)
-
-        self.main = QWidget(ComWindow)
-        # makes a QWidget out of the main window
-        self.main.setObjectName(u"main")
-        # sets the object name
+        super().__init__()
+        # init
 
         self.thisExeDir = os.path.dirname(sys.executable)
         # the directory this exe is located in
@@ -37,26 +26,14 @@ class ComConfWindow(object):
         self.configPath = os.path.join(self.configFolderPath, "commandConfig.json")
         # stores the config file's path
 
-        self.window.setWindowIcon(QIcon(self.mainIcon))
+        self.setMinimumSize(800, 550)
+        # sets the window size 
+        self.setWindowIcon(QIcon(self.mainIcon))
         # the window icon
-
-        self.window.setWindowTitle("SBO Twitch Bot Command Configuration")
+        self.setWindowTitle("SBO Twitch Bot Command Configuration")
         # sets title name
 
-        def readConfig() -> dict:
-            """Function to read the config file, returns the json dictionary"""
-            try:
-            # tries to read the config.json
-                with open(self.configPath, "r", encoding="utf-8") as cfg:
-                # opens the config file in read mode
-                    newConfig = json.load(cfg)
-                    # stores the contents in self.configuration
-                    return newConfig
-                    # returns the new config 
-            except:
-            # if it can't (file doesn't exist)
-
-                defaultConfig = {
+        self.defaultConfig = {
                     "playlist": {"enabled": True, "chatterCooldown": 600, "channelCooldown": 150, "requiredLevel": "Chatter", "alias": "", "syntax": ""},
                     "artist": {"enabled": True, "chatterCooldown": 180, "channelCooldown": 60, "requiredLevel": "Chatter", "alias": "", "syntax": ""},
                     "album": {"enabled": True, "chatterCooldown": 180, "channelCooldown": 60, "requiredLevel": "Chatter", "alias": "", "syntax": ""},
@@ -66,8 +43,7 @@ class ComConfWindow(object):
                     "resume": {"enabled": True, "chatterCooldown": 600, "channelCooldown": 120, "requiredLevel": "Moderator", "alias": "continue", "syntax": ""},
                     "skip": {"enabled": True, "chatterCooldown": 600, "channelCooldown": 120, "requiredLevel": "Moderator", "alias": "", "syntax": ""},
                     "previous": {"enabled": True, "chatterCooldown": 600, "channelCooldown": 120, "requiredLevel": "Moderator", "alias": "", "syntax": ""},
-                    "queue": {"enabled": True, "chatterCooldown": 300, "channelCooldown": 30, "requiredLevel": "Subscriber", "alias": "", "syntax": "Usage: queue {spotifyURI} / queue {spotifyURL} / queue {spotifyID}"},
-                    "queueq": {"enabled": True, "chatterCooldown": 300, "channelCooldown": 30, "requiredLevel": "Subscriber", "alias": "", "syntax": "Usage: queueq {song name}, {artist} / queueq {song name}"},
+                    "queue": {"enabled": True, "chatterCooldown": 300, "channelCooldown": 30, "requiredLevel": "Subscriber", "alias": "", "syntax": "Usage: queue {Spotify URL / ID} / queue {song} / queue {song + 'by' / ',' + artist}"},
                     "songColor": {"enabled": True, "chatterCooldown": 300, "channelCooldown": 60, "requiredLevel": "Subscriber", "alias": "", "syntax": "Usage: songColor {color} / songColor {hexCode} / songColor {clear}"},
                     "artistColor": {"enabled": True, "chatterCooldown": 300, "channelCooldown": 60, "requiredLevel": "Subscriber", "alias": "", "syntax": "Usage: artistColor {color} / artistColor {hexCode} / artistColor {clear}"},
                     "albumColor": {"enabled": True, "chatterCooldown": 300, "channelCooldown": 60, "requiredLevel": "Subscriber", "alias": "", "syntax": "Usage: albumColor {color} / albumColor {hexCode} / albumColor {clear}"},
@@ -75,38 +51,52 @@ class ComConfWindow(object):
                     "overlayColor": {"enabled": True, "chatterCooldown": 300, "channelCooldown": 60, "requiredLevel": "Subscriber", "alias": "", "syntax": "Usage: overlayColor {color} / overlayColor {hexCode} / overlayColor {clear}"},
                     "customColor": {"enabled": True, "chatterCooldown": 600, "channelCooldown": 60, "requiredLevel": "Subscriber", "alias": "", "syntax": "Usage: customColor {get} {color/all} / customColor {set} {color} {hexCode} / customColor {remove} {color}"},
                     "sboHelp": {"enabled": True, "chatterCooldown": 600, "channelCooldown": 60, "requiredLevel": "Chatter", "alias": "", "syntax": "Usage: sboHelp {command} / sboHelp"}
-                }
-                # forms a new configuration file from preset defaults
+        }
+        # forms a new configuration file from preset defaults
 
+        def readConfig() -> dict[str, dict[str]]:
+            """Function to read the config file, returns the json dictionary"""
+            try:
+            # tries to read the config.json
+                with open(self.configPath, "r", encoding="utf-8") as cfg:
+                # opens the config file in read mode
+                    newConfig = json.load(cfg)
+                    # stores the contents in self.configuration
+                return newConfig
+                # returns the new config 
+            except:
+            # if it can't (file doesn't exist/issue reading file)
                 with open(self.configPath, "w", encoding="utf-8") as cfg:
                 # "opens" the config (doesn't exist, so just makes a new one)
-                    json.dump(defaultConfig, cfg, indent=3)
+                    json.dump(self.defaultConfig, cfg, indent=3)
                     # writes the default config
-                return defaultConfig
+                return self.defaultConfig
                 # returns the default config
 
         self.loadedCommandConfig = readConfig()
         # runs the config reader to get new config info, stores it
-
         self.commandList = []
-        # list of commands stored 
+        # list of commands stored
 
         for command in self.loadedCommandConfig.keys():
         # goes through every command
-            self.commandList.append(command)
-            # adds the name of the command to the list
+            if command not in self.defaultConfig.keys():
+            # if that command is not found in the default config's keys (ensures there's no stale old values)
+                self.loadedCommandConfig.pop(command)
+                # deletes the command
+            else:
+            # is both in the loaded and default config
+                self.commandList.append(command)
+                # adds the name of the command to the list
 
         self.selectedCommand = self.commandList[0]
         # gets the first element of the command list
-
-        self.centralWidget = QWidget(ComWindow)
+        self.mainWidget = QWidget()
         # the main, central widget
-        self.centralWidget.setObjectName("centralWidget")
-        # sets name
 
     ### Main Layout ###
 
-        self.mainLayout = QGridLayout(self.centralWidget)
+        self.mainLayout = QGridLayout(self.mainWidget)
         # sets the main layout to use a grid of the central
         self.mainLayout.setObjectName("mainLayout")
         # sets name
@@ -218,12 +208,9 @@ class ComConfWindow(object):
             self.commandDropdown.addItem(command)
             # adds all the commands as items into the dropdown
 
-        selectedIndex = self.commandDropdown.findText(self.selectedCommand)
-        # finds the index of the selected index
-        self.commandDropdown.setCurrentIndex(selectedIndex)
+        self.commandDropdown.setCurrentText(self.selectedCommand)
         # sets the current text to match the 
-
-        self.commandDropdown.currentIndexChanged.connect(self.selectNewCommand)
+        self.commandDropdown.currentTextChanged.connect(self.selectNewCommand)
         # when the selection changes, calls the function that handles index changes
 
         self.commandLayout.addWidget(self.commandLabel, 0, 0, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -414,29 +401,30 @@ class ComConfWindow(object):
         self.buttonLayout.addWidget(self.saveQuitButton, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds to the layout
 
-        self.saveQuitButton.clicked.connect(lambda: self.writeConfig(True))
+        self.saveQuitButton.clicked.connect(self.writeConfig)
         # connects the SBO start button to the config write + exit
 
     ### Central Widget ###
 
-        ComWindow.setCentralWidget(self.centralWidget)
+        self.setCentralWidget(self.mainWidget)
         # sets central widget
-        
-        QTimer.singleShot(0, self.selectNewCommand)
+        QTimer.singleShot(0, lambda: self.selectNewCommand(True))
         # calls the selectNewCommand to get the current command's details right away
 
 
 
 ### Command Selection Function ###
 
-    def selectNewCommand(self):
+    def selectNewCommand(self, startup: bool = False):
         """Function to change selected command"""
 
-        newCommand = self.commandDropdown.currentText().strip()
+        newCommand = self.commandDropdown.currentText()
         # grabs the name of the current command
-
-        self.saveCommand(self.selectedCommand)
-        # uses the selected command value stored in self to save the details before swapping over to the new command
+        
+        if not startup:
+        # doesn't save the command at startup
+            self.saveCommand(self.selectedCommand)
+            # uses the selected command value stored in self to save the details before swapping over to the new command
 
         self.selectedCommand = newCommand
         # reassigns new command
@@ -560,7 +548,7 @@ class ComConfWindow(object):
             json.dump(self.loadedCommandConfig, cfg, indent=3)
             # dumps everything to file
         
-        self.window.close()
+        self.close()
         # closes the whole process
 
 
@@ -573,13 +561,8 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     # creates a Qt Application
 
-    cmdCfgWindow = QMainWindow()
-    # creates a window
-    ui = ComConfWindow()
-    # takes the UI class
-    ui.setupUi(cmdCfgWindow)
-    # "populates" the UI class
-
+    cmdCfgWindow = ComConfWindow()
+    # instantiates the window class
     cmdCfgWindow.show()
     # displays the window
 

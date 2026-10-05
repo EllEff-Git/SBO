@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html>
+<head>
+<body>
+
+<!-- fake border is the element that gets the player size cut out, sits on top of everything
+        basically just a rectangle that gets its center diced off to allow transparency -->
+<div class="fakeBorder" id="fakeBorder">
+    <!-- spinner is the color-matched box that spins behind fakeBorder, to allow the colors to pass through -->
+    <div class="spinner" id="spinner"></div>
+</div>
+<!-- the player element, contains all fields/elements -->
+<div id="player">
+    <!-- the background element, sits below player to add a background (image, color, opaque...) -->
+    <div id="background"></div>
+    <!-- the background's image (if enabled)-->
+    <img id="backgroundCover" src="https://i.scdn.co/image/ab67616d0000e1a3c4258b134ff5756932f9c46f"></img>
+    <!-- the image/album cover -->
+    <img id="cover" src="https://i.scdn.co/image/ab67616d0000e1a3c4258b134ff5756932f9c46f"></img>
+    <!-- the field container (text fields, progress bar, timer)-->
+    <div id="info">
+        <!-- the text wrapper for the title field -->
+        <div class="text-wrapper">
+            <div id="track">hurt my feelings</div>
+        </div>
+        <!-- the text wrapper for the SHAA field -->
+        <div class="text-wrapper">
+            <div id="shaa">622 plays x 1,260.6 minutes</div>
+        </div>
+        <!-- the text wrapper for the artist field -->
+        <div class="text-wrapper">
+            <div id="artist">By Tate McRae</div>
+        </div>
+        <!-- the text wrapper for the album field-->
+        <div class="text-wrapper">
+           <div id="album">THINK LATER</div>
+        </div>
+        <!-- the progress container, houses the progress bar and timer-->
+        <div id="progress-container">
+            <!-- the progress bar 
+                "progress" is the container, houses the background color (#949494 default ~greyish)
+                "bar" is the actual bar, which colors get applied to and moves based on percentage -->
+            <div id="progress"><div id="bar"></div></div>
+            <!-- the progress timer, sets default value -->
+            <div id="timer">0:38 / 2:02</div>
+        </div>
+    </div>
+</div>
+
+<!-- svg element used to "cut out" the fake border element so it looks like a border but acts as a box (better for animations)
+    these measurements should be identical to the white box below, they're just the fakeBorder's measurements -->
+<svg id="playerCutoutSvg" width="454px" height="124px">
+    <defs>
+        <!-- the mask's ID -->
+        <mask id="playerCutout">
+            <!-- the white rectangle is the area that will be visible (should match the fake border's size)
+                x,y are position, rx,ry are corner rounding numbers / the white's x and y should be 0, so it's aligned with the fakeBorder
+                black's x and 5 should match the border thickness you're aiming for (5px borders = 5,5) -->
+            <rect id="cutoutOuter" x="0" y="0" width="454px" height="124px" rx="18" ry="18" fill="white"></rect>
+            <!-- the black rectangle is the player's area, which will be cut out from the fake border box to make it transparent (so player can be seen)
+                as such, the sizes should match player *including* its padding (currently 12px, so 420 + 12 + 12 = 444px) for both width and height -->
+            <rect id="cutoutInner" x="5" y="5" width="444px" height="114px" rx="15" ry="15" fill="black"></rect>
+        </mask>
+    </defs>
+</svg>
+
+<script>
+
+// initialises player visual variables
+let maxInfoSize = 0, playerXmod = 0, playerYmod = 0;
+// initialises font
+let customFontFile = null;
+// initialises a SHAA-compatibility check boolean
+let shaaCompat = false;
+
+// function to update element colors
+function updatePreview(config) {
+    // grabs the "root" as the document element 
+    const root = document.documentElement;
+
+    // sets the root styles from the config
+    root.style.setProperty('--track-color', config.trackColor);
+    root.style.setProperty('--artist-color', config.artistColor);
+    root.style.setProperty('--album-color', config.albumColor);
+    root.style.setProperty('--border-color', config.borderColor);
+    root.style.setProperty('--progress-color', config.progressColor);
+
+    // grabs the size modifiers, too
+    playerXmod = config.widthMod;
+    playerYmod = config.heightMod;
+
+    // grabs the SHAA visual bool
+    shaaCompat = config.shaaCompat;
+
+    // runs the size modifier function
+    shaaCompatCheck();
+} 
+
+// function to swap the font out with a font file
+async function setFont(fontUrl) {
+    
+    // if there's already a custom font
+    if (customFontFile) {
+        // deletes it from the document fonts
+        document.fonts.delete(customFontFile);
+    }
+    
+    // forms a new font 
+    customFontFile = new FontFace(
+        "PreviewCustomFont",
+        `url("${fontUrl}")`
+    );
+
+    // try (random file, may just go kaboom)
+    try {
+        // waits for the font file to load
+        await customFontFile.load();
+
+        // adds the font to the document
+        document.fonts.add(customFontFile);
+        // sets the font family to match
+        document.body.style.fontFamily = "PreviewCustomFont";
+    
+    // error (debug)
+    } catch (error) {
+        console.error("Failed to load font:", error);
+    }
+}
+
+</script>
+
+</body>
+
+<style>
+
+:root {
+    --track-color: #ffffff;
+    --artist-color: #ffffff;
+    --album-color: #ffffff;
+    --border-color: linear-gradient(90deg, #ff0000, #00ff00, #0000ff, #ff0000);
+    --progress-color: #1db954;
+}
+
+/* some mega-override element that breaks everything */
+div {
+    /* if this isn't set, uses block by default, which prevents text element scaling
+        that means the text fields just use the max width they have, and *always* scroll */
+    display: flex;
+}
+
+/* base page body */
+body {
+    /* background must be transparent for capture to function, otherwise will capture that color under the player */
+    background: transparent;
+    /* can be used to change the font for all texts, or the font can be defined per-field below */
+    font-family: "Segoe UI", sans-serif;
+}
+
+/* a background element behind the player, added to add more blur/opaqueness */
+#background {
+    /* position should be absolute, to ensure it doesn't get squished by other elements in player */
+    position: absolute;
+    /* 0 in everything ensures it follows the player settings */
+    top: 0; bottom: 0; left: 0px; right: 0;
+    /* color and opacity of the background 
+        this controls how the background looks, if you want a pink hue, make it pink, blue -> blue, etc 
+        the last number is opacity, 0-1, 0 being fully transparent, 1 being fully opaque */
+    background-color: rgba(1, 1, 1, 0.75);
+    /* how rounded the player element's corners should be (should be 1px less than fakeBorder, to prevent gaps) */
+    border-radius: 14px;
+    /* matches the player size + the padding */
+    width: 448px;
+    height: 118px;
+    /* z-index of background should be the lowest out of all*/
+    z-index: 1;
+}
+
+/* puts the album cover in the background */
+#backgroundCover {
+    /* sets the position*/
+    position: absolute;
+    top: 8; left: 0;
+    /* matches the player size + the padding */
+    width: 448px;
+    height: 118px;
+    /* makes sure the corners don't show up */
+    border-radius: 15px;
+    /* ensures there's no extra color*/
+    background-color: none;
+    /* how blurry the background should be (higher pixel # is more blurry) */
+    filter: blur(5px);
+    /* how the picture is formatted - cover sets it so it fits width-wise and the height is cut
+        fill stretches it so both dimensions are filled 
+        contain makes it fit height-wise (only appears in the middle) */
+    object-fit: cover;
+    /* how the picture is positioned - accepts things like "top right" or "bottom" */
+    object-position: center;
+    /* how see-through the picture is */
+    opacity: 0.75;
+}
+
+/* the player, aka the full base for all elements */
+#player {
+    /* positioning of the player */
+    position: absolute;
+    /* how far from the top-left corner the player should be */
+    top: 8px; bottom: 0px; left: 8px; right: 0px;
+    display: flex;
+    align-items: center;
+    /* space between the picture and other elements */
+    gap: 12px;
+    /* first 3 are color, the last number in background dictates how opaque it is */
+    background: rgba(25, 25, 25, 0.75);
+    /* how rounded the player element's corners should be (should be 1px less than fakeBorder, to prevent gaps) */
+    border-radius: 14px;
+    /* how much space there is on the outside of the picture/text/timer elements */
+    padding: 12px;
+    /* player sizes */
+    width: 424px;
+    height: 94px;
+    /* the depth of the player (must be higher than background, equal or lower than elements) */
+    z-index: 2;
+    overflow: hidden;
+}
+
+/* the "border" around the player - it's really just a box with an SVG cutout applied */
+#fakeBorder {
+    position: absolute;
+    /* how far from the top-left corner the player should be */
+    top: 5px; bottom: 0px; left: 5px; right: 0px;
+    /* width should be how wide the player is (with paddings) + how much border area you want (5px per side default) 
+        currently has small, 1.5px black borders, so this is -3px total */
+    width: 451px;
+    /* height is the same thing, (player + 2*padding + 2*border thickness) 
+        same as width, -3px for borders */
+    height: 121px;
+    /* how rounded the outer corners should be (should match rx,ry in the white box in SVG definition */
+    border-radius: 18px;
+    /* a z-index of 4 guarantees it stays on top of everything, should be > player's index to hide the player corners  */
+    z-index: 4;
+    /* applies the "mask" (the SVG) so that the center is completely removed, and the player can be seen through */
+    mask: url(#playerCutout);
+    /* webkit mask is just in case the browser/OBS is having trouble with the default mask type */
+    -webkit-mask: url(#playerCutout);
+    /* adds small borders around the whole player to give pop-effect in contrasty situations */
+    border: black 1.5px solid;
+    /* important to hide the extra parts of "spinner", otherwise there'll be a massive color box spinning behind the player */
+    overflow: hidden;
+}
+
+/* the "spinning" element (it's actually just a big box behind the border) */
+#spinner {
+    /* the width and height should be bigger than the biggest measurement of the border */
+    width: 500px;
+    height: 500px;
+    /* ensures it gets positioned according to the coordinates, not where the document thinks it should sit*/
+    position: absolute;
+    /* the top coordinate is (half of fakeBorder's height - half of spinner's size:
+        = (124 / 2) - 250 = 62px - 250 = -188 */
+    top: -188px; bottom: 0px; 
+    /* the left coordinate is (half of fakeBorder's width - half of spinner's size: 
+        = (454 / 2) - 250 = 227 - 250 = -23 */
+    left: -23px; right: 0px;
+    /* these fields are automatically overwritten by the gradientCheck below, these are mostly just fallbacks/guides */
+    /* sets the animation by name (always called gradientBorder, because that's what SBO-WS uses when building) */
+    background: var(--border-color);
+}
+
+/* album picture */
+#cover {
+    /* how wide the picture should be */
+    width: auto;
+    max-width: 30%;
+    /* how tall the picture should be */
+    height: auto;
+    max-height: 90%;
+    /* how rounded the corners should be */
+    border-radius: 10px;
+    /* how to place the picture, contain ensures it fits into the smaller of the two size constraints (usually height) */
+    object-fit: contain;
+    /* the color of the cover background - only visible when no picture is found */
+    background: #424242;
+    /* doesn't allow it to shrink */
+    flex-shrink: 0;
+    /* z-index of 3 is higher than the player itself */
+    z-index: 3;
+    /* a border around the album cover, if desired */
+    /* border: 1px solid white; */
+}
+
+/* main info, all player fields inherit this (text, bar, timer) */
+#info {
+    /* allows the fields to sit in the spots they need, vertically */
+    display: flex;
+    flex-direction: column;
+    /* hides the parts of text that spill over */
+    overflow: hidden;
+    flex: 1;
+    /* higher than player */
+    z-index: 3;
+    /* inherits size from player and cover */
+    width: auto;
+    max-width: none;
+    height: auto;
+}
+
+/* the text fields inherit these */
+.text-wrapper {
+    /* sets a lot of positional info to ensure text fields behave */
+    display: flex;
+    justify-content: flex-start;
+    position: relative;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+/* all text field-wide configs */
+#track, #artist, #album, #shaa {
+    position: relative;
+    /* lets the text overflow, but clips the overflowed portion */
+    text-overflow: clip;
+    /* ensures they always have some space */
+    min-width: 0;
+    /* stops the fields from submitting to other size restrictions */
+    flex-shrink: 0;
+    /* the size of the text */
+    font-size: 14px; 
+    /* the text styling */
+    font-weight: bold;
+    font-style: italic;
+    /* adds borders around the text - looks better in browser capture, comment out/set to 0px if it interferes 
+        basically just helps the text not "shimmer" when it's scrolling */
+    -webkit-text-stroke: 0.5px black;
+    /* ensures the text itself is transparent, allowing the "background" from gradientCheck to be seen through */
+    -webkit-text-fill-color: transparent;
+    /* clips the text out of the background */
+    background-clip: text;
+}
+
+/* the name/title field of the song */
+#track {
+    /* lets the title sit slightly above where the default is */
+    top: -3px;
+    /* the title's styling (matches the others now, can be changed) */
+    font-weight: bold;
+    font-style: italic;
+    /* the size of the title text */
+    font-size: 19px;
+    /* makes the text scale to fit without restrictions */
+    width: auto;
+    max-width: none;
+    background: var(--track-color);
+    background-clip: text;
+}
+
+/* artist and album fields */
+#artist {
+    /* makes the text scale to fit without restrictions */
+    background: var(--artist-color);
+    background-clip: text;
+}
+
+#album {
+    background: var(--album-color);
+    background-clip: text;
+}
+
+/* SHAA field */
+#shaa {
+    /* makes the text scale to fit without restrictions */
+    width: auto;
+    max-width: none;
+    /* the support text's styling (matches the title now, can be changed) */
+    font-weight: bold;
+    font-style: italic;
+    background: var(--track-color);
+    background-clip: text;
+}
+
+/* the progress bar + timer container */
+#progress-container {
+    display: flex;
+    /* aligns the bar and timer so they're equally spaced out from the edge and picture*/
+    align-items: center;
+    justify-content: space-between;
+    /* the gap between the bar and timer*/
+    gap: 6px;
+    margin-top: 4px;
+    /* can't be larger than the info field itself, uses calculated size */
+    max-width: var(--maxInfoWidth, 80%);
+}
+
+/* progress bar (background / empty) */
+#progress {
+    flex: 1;
+    /* sets minimum width */
+    min-width: 50px;
+    /* how tall the player progress bar should be */
+    height: 4px;
+    /* the color of the empty part of the bar */
+    background: #949494;
+    /* places the progress bar slightly more below the text fields than the timer */
+    margin-top: 3px;
+    /* how rounded the corners are */
+    border-radius: 2px;
+    /* border style around the progress bar (black gives a good contrast with this background setting */
+    border: 1.5px, solid, #000000;
+    overflow: hidden;
+    position: relative;
+}
+
+/* progress bar (fill) */
+#bar {
+    height: 100%;
+    /* sets a background image */
+    background: var(--progress-color);
+    width: 0%;
+    /* adds a tiny transition to smoothe the bar updates */
+    transition: width 0.4s linear;
+    /* sets the position inside the progress bar */
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+/* the timer/duration on the right */
+#timer {
+    /* sets a font that's just a smidge smaller than album and artist */
+    font-size: 11px;
+    white-space: nowrap;
+    opacity: 0.8;
+    /* color and style are matched with the other support fields (album, artist) */
+    color: #ffffff;
+    font-style: italic;
+    font-weight: bold;
+}
+
+</style>
+</head>
+
+<body>
+<script>
+
+// function to check if the SHAA compatibility has been enabled (after load)
+function shaaCompatCheck() {
+    
+    // variables for height and width (adds the config-based modifiers, positive or negative)
+    let maxWidth = (454 + playerXmod);
+    let maxHeight = (124 + playerYmod);
+
+    // updates the width for the text fields
+    maxInfoSize = ((420 - (90 * 0.9) - 12) + playerXmod);
+
+    // if SHAA compatibility is enabled
+    if (shaaCompat) {
+        // adds 30 to max height
+        maxHeight = (maxHeight + 30);
+    }
+
+    // defines the max size for the info fields (text, progress container (bar + timer))
+    document.documentElement.style.setProperty("--maxInfoWidth", maxInfoSize + "px");
+
+    // sets the height for all 3 svg-related pieces
+    document.getElementById("playerCutoutSvg").setAttribute("height", `${maxHeight}px`);
+    document.getElementById("cutoutOuter").setAttribute("height", `${maxHeight}px`);
+    document.getElementById("cutoutInner").setAttribute("height", `${maxHeight - 10}px`);
+    // sets the width for all 3 svg-related pieces
+    document.getElementById("playerCutoutSvg").setAttribute("width", `${maxWidth}px`);
+    document.getElementById("cutoutOuter").setAttribute("width", `${maxWidth}px`);
+    document.getElementById("cutoutInner").setAttribute("width", `${maxWidth - 10}px`);
+
+    // sets the height for all non-svg elements
+    document.getElementById("background").style.height = `${maxHeight - 6}px`;
+    document.getElementById("backgroundCover").style.height = `${maxHeight - 6}px`;
+    document.getElementById("player").style.height = `${maxHeight - 30}px`;
+    document.getElementById("fakeBorder").style.height = `${maxHeight - 3}px`;
+    // sets the width for all non-svg elements
+    document.getElementById("background").style.width = `${maxWidth - 6}px`;
+    document.getElementById("backgroundCover").style.width = `${maxWidth - 6}px`;
+    document.getElementById("player").style.width = `${maxWidth - 30}px`;
+    document.getElementById("fakeBorder").style.width = `${maxWidth - 3}px`;
+
+    // border element (saves as constant because it needs multiple changes)
+    const spinnerElement = document.getElementById("spinner");
+
+    // larger user-configured modifier
+    let largerMod = Math.max(playerXmod, playerYmod)
+
+    // sets both the spinner's width and height to the size of hte larger modifier (since the intention is to have a square)
+    spinnerElement.style.height = `${500 + largerMod}px`;
+    spinnerElement.style.width = `${500 + largerMod}px`;
+
+    // fakeborder size def
+    let fakeBorderX = 0;
+    let fakeBorderY = 0;
+
+    // grabs the actual values
+    fakeBorderX = parseFloat(document.getElementById("fakeBorder").style.width);
+    fakeBorderY = parseFloat(document.getElementById("fakeBorder").style.height);
+
+    // sets the top and left locations of the spinner (calculated, check the spinner definition for more details on how)
+    spinnerElement.style.top = `${(fakeBorderY / 2) - ((500 + largerMod) / 2)}px`;
+    spinnerElement.style.left = `${(fakeBorderX / 2) - ((500 + largerMod) / 2)}px`;
+
+    // if SHAA compatibility is enabled
+    if (shaaCompat) {
+        // sets the display to flex (shows the text)
+        document.getElementById("shaa").style.display = "flex";
+    }
+    // SHAA compat is off
+    else {
+        // disables the SHAA field (blocks display)
+        document.getElementById("shaa").style.display = "none";
+    }
+}
+
+</script>
+</body>
+</html>

@@ -2,7 +2,7 @@ import asyncio, os, sys, json, time
 # Required for file directory grabs, reads, asynchronous functions, etc
 import uvicorn, socket, threading
 # Required for websocketing and site management
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 # Required for web server hosting
 from fastapi.responses import FileResponse
 # Required for getting status from server
@@ -30,7 +30,6 @@ configFolderPath = os.path.join(os.environ["LOCALAPPDATA"], "SBO")
 site = os.path.abspath(os.path.join(mainFolder, "index.html"))
 """Stores the full path of the index.html file"""
 
-
 funcConfigPath = os.path.join(configFolderPath, "functionConfig.json")
 """The full path to the functional config file (C:/Users/<user>/AppData/Local/SBO/functionConfig.json)"""
 funcConfig = {}
@@ -40,6 +39,9 @@ sboConfigPath = os.path.join(configFolderPath, "sboConfig.json")
 """The full path to the SBO visual config file (C:/Users/<user>/AppData/Local/SBO/sboConfig.json)"""
 sboConfig = {}
 """The SBO configuration dictionary"""
+
+fontFolderPath = os.path.join(configFolderPath, "fonts")
+"""The fonts folder path in the config folder"""
 
 if sys.stdout:
 # if launched as a subprocess, and there's a standard output pipe
@@ -83,18 +85,32 @@ playerXaxisMod = 0
 playerYaxisMod = 0
 """The number of pixels to add to the player height"""
 
-defaultSongColor = "ffffff"
+titleSize = 19
+"""The font size for the title field"""
+fieldSize = 14
+"""The font size for the detail fields"""
+timerSize = 11
+"""The font size for the timer field"""
+
+overlayFont = "Segoe UI"
+"""The font family to use"""
+overlayFontFile = False
+"""Whether to use a local file for font load"""
+overlayFontPath = None
+"""The font file location, if using a font file"""
+
+defaultSongColor = "#ffffff"
 """The default color for song (string, hex)"""
-defaultArtistColor = "ffffff"
+defaultArtistColor = "#ffffff"
 """The default color for artist (string, hex)"""
-defaultAlbumColor = "ffffff"
+defaultAlbumColor = "#ffffff"
 """The default color for album (string, hex)"""
-defaultBorderColor = "ffffff, 00ff00, 0000ff"
+defaultBorderColor = "#ffffff, #00ff00, #0000ff"
 """The default color for border (string, hex)"""
 
-defaultBarColor = "1ED760"
+defaultBarColor = "#1ED760"
 """The default color for progress bar (string, hex)"""
-defaultPauseColor = "FF2C00"
+defaultPauseColor = "#FF2C00"
 """The default color for paused progress bar (string, hex)"""
 
 ### Field Mapper ##
@@ -138,23 +154,28 @@ print(f"HTML overlay program {sboWSver} starting", flush=True)
 
 ### Color Split ###
 
-def colorSplitter(colorString: str):
+def colorSplitter(colorString: str) -> str:
     """Function to split strings of color with no hex marker """
 
     if "," in colorString:
-        # if there's any commas in the color string
+    # if there's any commas in the color string
         colorString = colorString.replace('"', "")
         # removes quotes it will have from being a string
         splitColors = colorString.split(",")
         # splits the colors into a list by commas
-        for color in range(len(splitColors)):
-            # goes through the list of colors
-            splitColors[color] = "#" + splitColors[color].strip()
+        for colorNum in range(len(splitColors)):
+        # goes through the list of colors
+            colorHex = splitColors[colorNum].strip()
+            # grabs the color string, strips away empty characters 
+            # eg. "#ff0000, #00ff00, #0000ff" would be turned into "#ff0000", " #00ff00", " #0000ff" before stripping
+            colorHex = f"{colorHex}" if colorHex.startswith("#") else f"#{colorHex}"
+            # adds the # if it doesn't already start with a #
+            splitColors[colorNum] = colorHex
             # adds a # to the start of the hex code and strips empty space
         colorString = ", ".join(splitColors)
         # joins the string back together with commas (now with # in front of each code)
     else:
-        # if no commas are found (1 color)
+    # if no commas are found (1 color)
         if not colorString.startswith("#"):
         # if the color string doesn't have a # yet
             colorString = f"#{colorString}"
@@ -207,6 +228,7 @@ def sboConfigManager():
     """Function that manages the SBO configuration"""
     global sboConfig, artistPrefix, albumPrefix
     global playerXaxisMod, playerYaxisMod
+    global titleSize, fieldSize, timerSize, overlayFont, overlayFontFile
     global defaultSongColor, defaultArtistColor, defaultAlbumColor
     global defaultBorderColor, defaultBarColor, defaultPauseColor
     # global -> local
@@ -223,12 +245,18 @@ def sboConfigManager():
                 albumPrefix = sboConfig.get("albumPrefix", "")
                 playerXaxisMod = sboConfig.get("playerXaxis", 0)
                 playerYaxisMod = sboConfig.get("playerYaxis", 0)
-                defaultSongColor = colorSplitter(sboConfig.get("titleColor", "ffffff"))
-                defaultArtistColor = colorSplitter(sboConfig.get("artistColor", "ffffff"))
-                defaultAlbumColor = colorSplitter(sboConfig.get("albumColor", "ffffff"))
-                defaultBorderColor = colorSplitter(sboConfig.get("borderColors", "ff0000, 00ff00, 0000ff"))
-                defaultBarColor = colorSplitter(sboConfig.get("progressColor", "1ED760"))
-                defaultPauseColor = colorSplitter(sboConfig.get("progressPauseColor", "FF2C00"))
+                fontSizes = sboConfig.get("overlayFontSizes", {"track": 19, "fields": 14, "timer": 11})
+                titleSize = fontSizes["track"]
+                fieldSize = fontSizes["fields"]
+                timerSize = fontSizes["timer"]
+                overlayFont = sboConfig.get("overlayFont", "Segoe UI")
+                overlayFontFile = sboConfig.get("overlayFontFile", False)
+                defaultSongColor = colorSplitter(sboConfig.get("titleColor", "#ffffff"))
+                defaultArtistColor = colorSplitter(sboConfig.get("artistColor", "#ffffff"))
+                defaultAlbumColor = colorSplitter(sboConfig.get("albumColor", "#ffffff"))
+                defaultBorderColor = colorSplitter(sboConfig.get("borderColors", "#ff0000, #00ff00, #0000ff"))
+                defaultBarColor = colorSplitter(sboConfig.get("progressColor", "#1ED760"))
+                defaultPauseColor = colorSplitter(sboConfig.get("progressPauseColor", "#FF2C00"))
                 # grabs the variables from the config file
         except Exception as fErr:
         # if the file can't be found/opened
@@ -254,6 +282,11 @@ HTMLconfig = {
     "playerTimeout": playerTimeout,
     "playerXmod": playerXaxisMod,
     "playerYmod": playerYaxisMod,
+    "titleSize": titleSize,
+    "fieldSize": fieldSize,
+    "timerSize": timerSize,
+    "overlayFont": overlayFont,
+    "overlayFontFile": overlayFontFile,
     "shaaCompat": enableShaaCompat,
     "titleColor": defaultSongColor,
     "artistColor": defaultArtistColor,
@@ -266,6 +299,13 @@ HTMLconfig = {
 
 print(f"HTML config updated", flush=True)
 # config read user update
+
+
+
+if overlayFontFile:
+# if using a custom file stored locally
+    overlayFontPath = os.path.join(fontFolderPath, overlayFont)
+    # joins the font folder and the name of the font to form the final path
 
 
 
@@ -351,7 +391,7 @@ def unixConverter(sbo: dict) -> tuple[int, int]:
 
 
 
-def noneRemover(string: str):
+def noneRemover(string: str) -> None | str:
     """Function that ensures no "None" values are sent through payload (None breaks JS)"""
     return None if string in (None, "None", "") else string
     # if the given string matches None, "None" or "", it returns None - otherwise returns the string
@@ -744,7 +784,7 @@ program = FastAPI(lifespan=lifespan)
 
 
 @program.get("/")
-# gets the HTML page
+# the location of the index (just the IP:port, eg. 127.0.0.1:6868)
 async def index():
     return FileResponse(site)
     # pushes the index.html up
@@ -752,11 +792,22 @@ async def index():
 
 
 @program.get("/config.json")
-# gets the config file
+# the location of the config file (main)
 async def configPush():
     return HTMLconfig
-    # sends the json dictionary that python made from config.ini
-    # this can be seen by going to localhost:(port)/config.json
+    # sends the json dictionary formed from the various config files
+
+
+
+@program.get("/fontFile")
+# the location of the font
+async def fontPush():
+    if overlayFontPath is None:
+    # if the path isn't defined (not using a file)
+        raise HTTPException(status_code=404)
+        # raises a 404 (missing file, it's ok)
+    return FileResponse(overlayFontPath)
+    # returns the font file from location
 
 
 

@@ -7,23 +7,12 @@ import json, os, sys, webbrowser
 
 
 
-class BotConfWindow(object):
+class BotConfWindow(QMainWindow):
     """The window class"""
-    def setupUi(self, BotWindow):
+    def __init__(self):
     # setup
-        if not BotWindow.objectName():
-        # checks for a name 
-            BotWindow.setObjectName(u"BotWindow")
-            # sets the name
-        BotWindow.setMinimumSize(925, 350)
-        # sets the window size 
-        self.window = BotWindow
-        # stores a reference in self to the actual window (so that it can be closed later)
-
-        self.main = QWidget(BotWindow)
-        # makes a QWidget out of the main window
-        self.main.setObjectName(u"main")
-        # sets the object name
+        super().__init__()
+        # init
 
         self.thisExeDir = os.path.dirname(sys.executable)
         # the directory this exe is located in
@@ -36,18 +25,12 @@ class BotConfWindow(object):
         # stores the "main" folder (SBO, which is 3 folders up)
         self.configPath = os.path.join(self.configFolderPath, "botConfig.json")
         # stores the config file's path
-        self.ownPath = os.path.join(self.mainFolder, "runtime", "Qt", "botWindow", "botWindow.exe")
-        # stores the configuration window path
 
-        self.cmdCfgExePath = os.path.join(self.mainFolder, "runtime", "Qt", "cmdWindow", "cmdWindow.exe")
-        # stores the command config window file path
-        self.cmdCfgPath = os.path.join(self.configFolderPath, "commandConfig.json")
-        # stores the command config .json file path
-
-        self.window.setWindowIcon(QIcon(self.mainIcon))
+        self.setMinimumSize(300, 500)
+        # sets the window size 
+        self.setWindowIcon(QIcon(self.mainIcon))
         # the window icon
-
-        self.window.setWindowTitle("SBO Twitch Bot Configuration")
+        self.setWindowTitle("SBO Twitch Bot Configuration")
         # sets title name
 
         def readConfig() -> dict:
@@ -68,7 +51,10 @@ class BotConfWindow(object):
                     "cooldownMessages": False,
                     "cooldownMessageFormat": "Command is on cooldown ({duration})",
                     "controlLiveOnly": False,
-                    "useSeparateBot": True
+                    "useSeparateBot": True,
+                    "announcePresence": True,
+                    "modCooldowns": "Bypass",
+                    "vipCooldowns": "Short"
                 }
                 # forms a new configuration file from preset defaults
 
@@ -81,15 +67,43 @@ class BotConfWindow(object):
 
         self.loadedConfig = readConfig()
         # runs the config reader to get new config info, stores it
-
-        self.centralWidget = QWidget(BotWindow)
+        self.mainWidget = QWidget()
         # the main, central widget
-        self.centralWidget.setObjectName("centralWidget")
-        # sets name
+
+        self.modCooldownOptions = ["Default", "Bypass", "Short", "Halved"]
+        self.vipCooldownOptions = ["Default", "Bypass", "Short", "Halved"]
+        # lists of options for cooldowns for VIPs/mods
+
+        self.selectedModCooldown = self.loadedConfig.get("modCooldowns", "Bypass")
+        # grabs the selected mod cooldown option
+        self.selectedVipCooldown = self.loadedConfig.get("vipCooldowns", "Short")
+        # grabs the selected vip cooldown option
+
+        if self.selectedModCooldown in self.modCooldownOptions:
+        # if the config-set value is in the list of options 
+            self.modCooldownOptions.remove(self.selectedModCooldown)
+            # removes it from the list of options
+        else:
+        # if it's somehow not
+            self.selectedModCooldown = "Bypass"
+            # uses the default value
+            self.modCooldownOptions.remove(self.selectedModCooldown)
+            # removes it from the list of options
+
+        if self.selectedVipCooldown in self.vipCooldownOptions:
+        # if the config-set value is in the list of options
+            self.vipCooldownOptions.remove(self.selectedVipCooldown)
+            # removes it from the list of options
+        else:
+        # if it's somehow not
+            self.selectedVipCooldown = "Short"
+            # uses the default value
+            self.vipCooldownOptions.remove(self.selectedVipCooldown)
+            # removes it from the list of options
 
     ### Main Layout ###
 
-        self.mainLayout = QGridLayout(self.centralWidget)
+        self.mainLayout = QGridLayout(self.mainWidget)
         # sets the main layout to use a grid of the central
         self.mainLayout.setObjectName("mainLayout")
         # sets name
@@ -138,8 +152,6 @@ class BotConfWindow(object):
 
         self.twitchIDfilter = QRegularExpressionValidator(QRegularExpression(r"\d+"))
         # Twitch ID filter (accepts any integer-based response)
-
-
 
     ### Inform Prompt ###
 
@@ -224,6 +236,24 @@ class BotConfWindow(object):
         self.optionLayout.addWidget(self.liveControlCheck, 4, 0, alignment=Qt.AlignmentFlag.AlignRight)
         # adds both to layout
 
+    ### Presence Announce ###
+
+        self.sayHiLabel = QLabel("Announce Presence")
+        # label for presence announce
+        self.sayHiLabel.setToolTip("Whether the bot should send a message in chat when it connects\n"
+                                "Sends a message on program start (only if stream is not live yet)\n"
+                                "Sends a message when stream goes live")
+        # tooltip
+
+        self.sayHiCheck = QCheckBox()
+        # the checkbox for the presence announce
+        self.sayHiCheck.setChecked(self.loadedConfig.get("announcePresence", True))
+        # sets the check state based on the config (defaults to True)
+
+        self.optionLayout.addWidget(self.sayHiLabel, 5, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.optionLayout.addWidget(self.sayHiCheck, 5, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        # adds both to layout
+
     ### Separate Bot Account ###
 
         self.separateBotLabel = QLabel("Separate Bot Account")
@@ -236,11 +266,51 @@ class BotConfWindow(object):
         self.separateBotCheck.setChecked(self.loadedConfig.get("useSeparateBot", True))
         # sets the check state based on the config (defaults to True)
 
-        self.optionLayout.addWidget(self.separateBotLabel, 5, 1, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.optionLayout.addWidget(self.separateBotCheck, 5, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        self.optionLayout.addWidget(self.separateBotLabel, 6, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.optionLayout.addWidget(self.separateBotCheck, 6, 0, alignment=Qt.AlignmentFlag.AlignRight)
         # adds both to layout
 
+    ### Mod Cooldowns ###
 
+        self.modCooldownLabel = QLabel("Moderator Cooldowns")
+        # label for mod cooldowns
+        self.modCooldownLabel.setToolTip("How moderator cooldowns should work\n"
+                                        "Default means they have the same cooldowns as everyone else\n"
+                                        "Halved splits the cooldowns down to half of the default duration\n"
+                                        "Short cuts the cooldowns down to 1/3rd of the default duration\n"
+                                        "Bypass skips the cooldowns completely")
+        # tooltip
+
+        self.modCooldownDropdown = QComboBox()
+        # the dropdown for the mod cooldown
+        self.modCooldownDropdown.addItem(self.selectedModCooldown)
+        self.modCooldownDropdown.addItems(self.modCooldownOptions)
+        # the dropdown options (adds the seelcted item first, then the rest)
+
+        self.optionLayout.addWidget(self.modCooldownLabel, 7, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.optionLayout.addWidget(self.modCooldownDropdown, 7, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        # adds both to layout
+
+    ### VIP Cooldowns ###
+
+        self.vipCooldownLabel = QLabel("VIP Cooldowns")
+        # label for VIP cooldowns
+        self.vipCooldownLabel.setToolTip("How VIP cooldowns should work\n"
+                                        "Default means they have the same cooldowns as everyone else\n"
+                                        "Halved splits the cooldowns down to half of the default duration\n"
+                                        "Short cuts the cooldowns down to 1/3rd of the default duration\n"
+                                        "Bypass skips the cooldowns completely")
+        # tooltip
+
+        self.vipCooldownDropdown = QComboBox()
+        # the dropdown for the VIP cooldown
+        self.vipCooldownDropdown.addItem(self.selectedVipCooldown)
+        self.vipCooldownDropdown.addItems(self.vipCooldownOptions)
+        # the dropdown options (adds the seelcted item first, then the rest)
+
+        self.optionLayout.addWidget(self.vipCooldownLabel, 8, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.optionLayout.addWidget(self.vipCooldownDropdown, 8, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        # adds both to layout
 
     ### Buttons ###
 
@@ -259,25 +329,15 @@ class BotConfWindow(object):
         self.saveQuitButton.setMinimumSize(240, 45)
         # sets a minimum size
 
-        self.openCmdCfgButton = QPushButton("Configure Commands")
-        # a button to open the comWindow.exe file
-        self.openCmdCfgButton.setToolTip("Opens the command configuration window")
-        # tooltip
-        self.openCmdCfgButton.setMinimumSize(240, 45)
-        # sets a minimum size
-
         self.saveQuitButton.clicked.connect(self.writeConfig)
         # connects the SBO start button to the config write + exit
-        self.openCmdCfgButton.clicked.connect(self.runCmdConfig)
-        # connects the command config button to the command config window runner
 
-        self.buttonLayout.addWidget(self.openCmdCfgButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.buttonLayout.addWidget(self.saveQuitButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.buttonLayout.addWidget(self.saveQuitButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds to the layout
   
     ### Central Widget ###
 
-        BotWindow.setCentralWidget(self.centralWidget)
+        self.setCentralWidget(self.mainWidget)
         # sets central widget
 
 
@@ -307,28 +367,10 @@ class BotConfWindow(object):
             button.setText("Show")
             # changes the button to say it shows on press
 
-### Command Config Window Run ###
-
-    def runCmdConfig(self):
-        """Function to run the bot command configuration window"""
-        self.cmdProcess = QProcess()
-        # creates a QProcess for the command config
-        self.cmdProcess.start(self.cmdCfgExePath)
-        # runs the command configuration window as a QProcess
-
 ### Config Write ###
 
     def writeConfig(self):
         """Function to write the config json file (and exit)"""
-
-        if not os.path.exists(self.cmdCfgPath):
-        # if the command config doesn't exist
-            self.informPrompt.setText(f"Command configuration not set up yet!\nCannot save before setting up\nOpening command config...")
-            # user warning
-            self.runCmdConfig()
-            # runs the command config
-            return
-            # stops this function
 
         self.informPrompt.setText("Saving configuration...")
         # sets saving text
@@ -338,7 +380,10 @@ class BotConfWindow(object):
             "cooldownMessages": self.cooldownMsgCheck.isChecked(),
             "cooldownMessageFormat": self.cooldownMsgFormatLine.text().strip(),
             "controlLiveOnly": self.liveControlCheck.isChecked(),
-            "useSeparateBot": self.separateBotCheck.isChecked()
+            "useSeparateBot": self.separateBotCheck.isChecked(),
+            "announcePresence": self.sayHiCheck.isChecked(),
+            "modCooldowns": self.modCooldownDropdown.currentText(),
+            "vipCooldowns": self.vipCooldownDropdown.currentText()
         }
         # forms a configuration based on the states of each of the fields
 
@@ -347,7 +392,7 @@ class BotConfWindow(object):
             json.dump(configuration, cfg, indent=3)
             # dumps everything in
 
-        self.window.close()
+        self.close()
         # closes the whole process
 
 
@@ -360,13 +405,8 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     # creates a Qt Application
 
-    botCfgWindow = QMainWindow()
-    # creates a window
-    ui = BotConfWindow()
-    # takes the UI class
-    ui.setupUi(botCfgWindow)
-    # "populates" the UI class
-
+    botCfgWindow = BotConfWindow()
+    # instantiates a window
     botCfgWindow.show()
     # displays the window
 

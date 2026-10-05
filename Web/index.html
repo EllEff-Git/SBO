@@ -18,6 +18,12 @@ let lastUpdateTime = Date.now();
 // initialises player visual variables
 let maxInfoSize = 0, playerTimeout = 0, playerXmod = 0, playerYmod = 0;
 
+// initialises font sizes
+let titleSize = 19, fieldSize = 14, timerSize = 11;
+
+// initialises font variables
+let overlayFont = "Segoe UI", overlayFontFile = false, customFontFile = null;
+
 // initialises a boolean for pause state stuff
 let isPaused = false, wasPaused = false;
 
@@ -79,6 +85,25 @@ document.addEventListener("DOMContentLoaded", () => {
         // stores the config x and y player modifiers 
         playerXmod = Config.playerXmod;
         playerYmod = Config.playerYmod;
+
+        // stores the font sizes
+        titleSize = Config.titleSize;
+        fieldSize = Config.fieldSize;
+        timerSize = Config.timerSize;
+
+        overlayFont = Config.overlayFont;
+        fontFileBool = Config.overlayFontFile;
+
+        // if the font is intended to be file-loaded
+        if (fontFileBool === true) {
+            // calls the font-setting function with the font file path
+            setFont(overlayFont)
+        }
+        // not file-loaded
+        else {
+            // sets the font family to match the font name
+            document.body.style.fontFamily = overlayFont;
+        }
         
         // stores the config colors in these "default variables" (as strings)
         defaultTitleColor = Config.titleColor;
@@ -418,7 +443,7 @@ document.addEventListener("DOMContentLoaded", () => {
     <!-- the background's image (if enabled)-->
     <img id="backgroundCover" src=""></img>
     <!-- the image/album cover -->
-    <img id="cover" src="">
+    <img id="cover" src=""></img>
     <!-- the field container (text fields, progress bar, timer)-->
     <div id="info">
         <!-- the text wrapper for the title field -->
@@ -713,7 +738,7 @@ body {
 }
 
 /* artist and album fields */
-.artist .album {
+.artist, .album {
     /* makes the text scale to fit without restrictions */
     width: auto;
     max-width: none;
@@ -1295,6 +1320,61 @@ function gradientCheck(colorList, elementName) {
             passedElement.style.backgroundImage = `linear-gradient(22.5deg, ${KFcolors.join(", ")})`;
         }
     } // closes other elements' check
+}
+
+// function to swap the font out with a font file
+async function setFont() {
+    
+    // if there's already a custom font
+    if (customFontFile) {
+        // deletes it from the document fonts
+        document.fonts.delete(customFontFile);
+        // resets the variable to null
+        customFontFile = null;
+    }
+
+    // try (lots of ways to go kaboom)
+    try {
+        // fetches the font file from the localhost site (ip:port/fontFile)
+        const res = await fetch("/fontFile", {cache: "no-store"})
+
+            // if the file isn't loaded properly
+            if (!res.ok) {
+                // sends error to log
+                throw new Error("Failed to get font file!");
+                // stops
+                return;
+            }
+
+        // grabs the file as a "blob"
+        const fontBlob = await res.blob();
+        // creates the font URL from the blob
+        const fontLocation = URL.createObjectURL(fontBlob);
+
+        // forms the actual font face
+        const fontFile = new FontFace(
+            "SBOcustomFont",
+            `url(${fontLocation})`
+        );
+
+        // goes to load the file
+        await fontFile.load();
+
+            // adds the font to the document
+            document.fonts.add(fontFile);
+            // sets the font family to match
+            document.body.style.fontFamily = "SBOcustomFont";
+
+            // stores the font reference in the global variable, so it can be deleted
+            customFontFile = fontFile;
+            // clean-up, gets rid of the font URL stored prior
+            URL.revokeObjectURL(fontLocation)
+        }
+    // error (debug)
+    catch (error) {
+        // sends to console
+        console.error("Failed to load font:", error);
+    }
 }
 
 </script>

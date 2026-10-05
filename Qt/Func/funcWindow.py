@@ -7,23 +7,12 @@ import json, os, sys
 
 
 
-class funcConfWindow(object):
+class funcConfWindow(QMainWindow):
     """The window class"""
-    def setupUi(self, FuncWindow):
+    def __init__(self):
     # setup
-        if not FuncWindow.objectName():
-        # checks for a name 
-            FuncWindow.setObjectName(u"FuncWindow")
-            # sets the name
-        FuncWindow.setMinimumSize(925, 350)
-        # sets the window size 
-        self.window = FuncWindow
-        # stores a reference in self to the actual window (so that it can be closed later)
-
-        self.main = QWidget(FuncWindow)
-        # makes a QWidget out of the main window
-        self.main.setObjectName(u"main")
-        # sets the object name
+        super().__init__()
+        # init
 
         self.thisExeDir = os.path.dirname(sys.executable)
         # the directory this exe is located in
@@ -36,23 +25,12 @@ class funcConfWindow(object):
         # stores the "main" folder (SBO, which is 3 folders up)
         self.configPath = os.path.join(self.configFolderPath, "functionConfig.json")
         # stores the config file's path
-        self.ownPath = os.path.join(self.mainFolder, "runtime", "Qt", "funcWindow", "funcWindow.exe")
-        # stores the configuration window path
 
-        self.sboConfigExePath = os.path.join(self.mainFolder, "runtime", "Qt", "sboWindow", "sboWindow.exe")
-        # stores the SBO visual configuration window .exe path
-        self.sboConfigPath = os.path.join(self.configFolderPath, "sboConfig.json")
-        # stores the SBO visual configuration .json file path
-
-        self.botConfigExePath = os.path.join(self.mainFolder, "runtime", "Qt", "botWindow", "botWindow.exe")
-        # stores the Twitch Bot configuration window .exe path
-        self.botConfigPath = os.path.join(self.configFolderPath, "botConfig.json")
-        # stores the Twitch Bot configuration .json file path
-
-        self.window.setWindowIcon(QIcon(self.mainIcon))
+        self.setMinimumSize(500, 750)
+        # sets the window size 
+        self.setWindowIcon(QIcon(self.mainIcon))
         # the window icon
-
-        self.window.setWindowTitle("SBO Functionality Configuration")
+        self.setWindowTitle("SBO Functionality Configuration")
         # sets title name
 
         self.firstTime = False
@@ -79,6 +57,7 @@ class funcConfWindow(object):
                     "addressType": "Device",
                     "consoleLength": 25,
                     "hidePlayerTimeout": 15,
+                    "renderOverlay": True,
                     "enableBot": True,
                     "skipFuncCfgWin": False,
                     "skipSBOcfgWin": False,
@@ -96,36 +75,20 @@ class funcConfWindow(object):
 
         self.loadedConfig = readConfig()
         # runs the config reader to get new config info, stores it
-
-        self.configsNotDone = 0
-        # start of counter
-
-        self.centralWidget = QWidget(FuncWindow)
+        self.mainWidget = QWidget()
         # the main, central widget
-        self.centralWidget.setObjectName("centralWidget")
-        # sets name
-
-
 
     ### Main Layout ###
 
-        self.mainLayout = QGridLayout(self.centralWidget)
+        self.mainLayout = QGridLayout(self.mainWidget)
         # sets the main layout to use a grid of the central
-        self.mainLayout.setObjectName("mainLayout")
-        # sets name
         self.mainLayout.setContentsMargins(25, 25, 25, 25)
         # sets margins of 25px 
-        self.mainLayout.setVerticalSpacing(25)
-        # sets vertical spacing
 
     ### User Inform Layout ###
 
         self.informLayout = QGridLayout()
         # adds a grid layout for the user inform prompt
-        self.informLayout.setObjectName("informLayout")
-        # sets name
-        self.informLayout.setContentsMargins(25, 25, 25, 25)
-        # sets margins of 25px
         self.informLayout.setVerticalSpacing(15)
         # sets vertical spacing
         self.informLayout.setHorizontalSpacing(10)
@@ -138,8 +101,6 @@ class funcConfWindow(object):
 
         self.optionLayout = QGridLayout()
         # adds a grid layout for the options
-        self.optionLayout.setObjectName("optionLayout")
-        # sets name
         self.optionLayout.setContentsMargins(25, 25, 25, 25)
         # sets margins of 25px
         self.optionLayout.setVerticalSpacing(15)
@@ -160,8 +121,6 @@ class funcConfWindow(object):
         # network port filter
         self.timeoutFilter = QIntValidator(0, 3600)
         # player timeout filter
-
-
     
     ### Inform Prompt ###
 
@@ -258,6 +217,21 @@ class funcConfWindow(object):
         self.optionLayout.addWidget(self.playerTimeoutLine, 3, 0, alignment=Qt.AlignmentFlag.AlignRight)
         # adds both to the layout
 
+    ### Overlay Render ###
+
+        self.renderOverlayLabel = QLabel("Render Overlay")
+        # label for the overlay rendering
+        self.renderOverlayLabel.setToolTip("Whether to render the overlay via web hosting\nDisabling means the overlay will not be created, and no data is passed\nDisable if only using SBO for the Bot")
+        # tooltip
+
+        self.renderOverlayCheck = QCheckBox()
+        self.renderOverlayCheck.setChecked(self.loadedConfig.get("renderOverlay", True))
+        # sets the check state based on the config (defaults to True)
+
+        self.optionLayout.addWidget(self.renderOverlayLabel, 4, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.optionLayout.addWidget(self.renderOverlayCheck, 4, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        # adds both to the layout
+
     ### Enable Bot ###
 
         self.enableBotLabel = QLabel("Enable Twitch Bot")
@@ -269,8 +243,8 @@ class funcConfWindow(object):
         self.enableBotCheck.setChecked(self.loadedConfig.get("enableBot", True))
         # sets the check state based on the config (defaults to True)
 
-        self.optionLayout.addWidget(self.enableBotLabel, 4, 1, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.optionLayout.addWidget(self.enableBotCheck, 4, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        self.optionLayout.addWidget(self.enableBotLabel, 5, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.optionLayout.addWidget(self.enableBotCheck, 5, 0, alignment=Qt.AlignmentFlag.AlignRight)
         # adds both to the layout
 
     ### Skip Functional Config ###
@@ -284,8 +258,8 @@ class funcConfWindow(object):
         self.skipFuncCfgCheck.setChecked(self.loadedConfig.get("skipFuncCfgWin", False))
         # sets the check state based on the config (defaults to False)
 
-        self.optionLayout.addWidget(self.skipFuncCfgLabel, 5, 1, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.optionLayout.addWidget(self.skipFuncCfgCheck, 5, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        self.optionLayout.addWidget(self.skipFuncCfgLabel, 6, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.optionLayout.addWidget(self.skipFuncCfgCheck, 6, 0, alignment=Qt.AlignmentFlag.AlignRight)
         # adds both to the layout
 
     ### Skip SBO Config ###
@@ -299,8 +273,8 @@ class funcConfWindow(object):
         self.skipSBOcfgCheck.setChecked(self.loadedConfig.get("skipSBOcfgWin", False))
         # sets the check state based on the config (defaults to False)
 
-        self.optionLayout.addWidget(self.skipSBOcfgLabel, 6, 1, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.optionLayout.addWidget(self.skipSBOcfgCheck, 6, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        self.optionLayout.addWidget(self.skipSBOcfgLabel, 7, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.optionLayout.addWidget(self.skipSBOcfgCheck, 7, 0, alignment=Qt.AlignmentFlag.AlignRight)
         # adds both to layout
 
     ### Skip Required Item Check ###
@@ -314,8 +288,8 @@ class funcConfWindow(object):
         self.skipRequiredCheck.setChecked(self.loadedConfig.get("skipRequiredCheck", False))
         # sets the check state based on the config (defaults to False)
 
-        self.optionLayout.addWidget(self.skipRequiredLabel, 7, 1, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.optionLayout.addWidget(self.skipRequiredCheck, 7, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        self.optionLayout.addWidget(self.skipRequiredLabel, 8, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.optionLayout.addWidget(self.skipRequiredCheck, 8, 0, alignment=Qt.AlignmentFlag.AlignRight)
         # adds both to layout
 
     ### Use SHAA Compat ###
@@ -330,35 +304,11 @@ class funcConfWindow(object):
         self.shaaCompatCheck.setChecked(self.loadedConfig.get("enableShaaCompat", False))
         # sets the check state based on teh config (defaults to False)
 
-        self.optionLayout.addWidget(self.shaaCompatLabel, 8, 1, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.optionLayout.addWidget(self.shaaCompatCheck, 8, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        self.optionLayout.addWidget(self.shaaCompatLabel, 9, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.optionLayout.addWidget(self.shaaCompatCheck, 9, 0, alignment=Qt.AlignmentFlag.AlignRight)
         # adds both to layout
 
-
-
     ### Buttons ###
-
-        self.buttonLayout = QGridLayout()
-        # makes a button layout
-        self.buttonLayout.setVerticalSpacing(15)
-        # sets spacing
-
-        self.mainLayout.addLayout(self.buttonLayout, 2, 0)
-        # adds the layout to main (row 2, under the options)
-
-        self.sboConfigButton = QPushButton("Configure SBO Visuals")
-        # a button to run the SBO configuration
-        self.sboConfigButton.setToolTip("Opens a configuration window to change SBO details")
-        # tooltip
-        self.sboConfigButton.setMinimumSize(240, 45)
-        # sets a minimum size
-
-        self.botConfigButton = QPushButton("Configure Twitch Bot")
-        # a button to run the SBO-Bot configuration
-        self.botConfigButton.setToolTip("Opens a window to configure the Twitch Bot details")
-        # tooltip
-        self.botConfigButton.setMinimumSize(240, 45)
-        # sets a minimum size
 
         self.startSBObutton = QPushButton("Save and close\nEnsure you press this to save the config!")
         # a button to close and start SBO
@@ -367,21 +317,15 @@ class funcConfWindow(object):
         self.startSBObutton.setMinimumSize(240, 45)
         # sets a minimum size
 
-        self.buttonLayout.addWidget(self.sboConfigButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.buttonLayout.addWidget(self.botConfigButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.buttonLayout.addWidget(self.startSBObutton, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.mainLayout.addWidget(self.startSBObutton, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds all to the layout, vertically aligned
 
-        self.sboConfigButton.clicked.connect(lambda: self.checkConfigs(1))
-        # connects the SBO config button to the async config runner
-        self.botConfigButton.clicked.connect(lambda: self.checkConfigs(2))
-        # connects the bot config button to the async config runner
-        self.startSBObutton.clicked.connect(self.checkConfigs)
+        self.startSBObutton.clicked.connect(self.writeConfig)
         # connects the SBO start button to the config write + exit
 
     ### Central Widget ###
 
-        FuncWindow.setCentralWidget(self.centralWidget)
+        self.setCentralWidget(self.mainWidget)
         # sets central widget
 
 ### First Time Prompt ###
@@ -419,68 +363,6 @@ class funcConfWindow(object):
         # if everything is ok
             None
             # closes
-
-### SBO Window Run ###
-
-    def runSBOconfig(self):
-        """Function to run the SBO configuration window"""
-        self.sboProcess = QProcess()
-        # creates a QProcess for the SBO config
-        self.sboProcess.start(self.sboConfigExePath)
-        # runs the SBO configuration window as a QProcess
-
-### SBO-Bot Window Run ###
-
-    def runBotConfig(self):
-        """Function to run the SBO-Bot configuration window"""
-        self.sboBotProcess = QProcess()
-        # creates a QProcess for the SBO-Bot config
-        self.sboBotProcess.start(self.botConfigExePath)
-        # runs the SBO-Bot configuration window as a QProcess
-
-### Check Other Configs ###
-
-    def checkConfigs(self, state:int=0):
-        """Function to check the configs before allowing save + exit"""
-
-        if state == 1:
-        # if the command is to open the sbo config
-            self.runSBOconfig()
-            # bypasses all, runs the SBO config
-            return
-            # stops
-
-        elif state == 2:
-        # if the command is to open the bot config
-            self.runBotConfig()
-            # bypasses all, runs the bot config
-            return
-            # stops
-
-        if not os.path.exists(self.sboConfigPath):
-        # if the sbo config file doesn't exist when trying to exit
-            self.informPrompt.setText("SBO Visuals have not been configured!\nCannot save before configuration!")
-            # user inform
-            self.configsNotDone += 1
-            # adds 1 to the counter
-            self.runSBOconfig()
-            # runs the SBO configuration window
-            return
-            # stops so it doesn't open both at once
-
-        if self.enableBotCheck.isChecked() and not os.path.exists(self.botConfigPath):
-        # if the bot is enabled but the config isn't done
-            self.informPrompt.setText("Twitch Bot is enabled, but has not been configured!\nCannot save before configuration!")
-            # user inform
-            self.configsNotDone += 1
-            # adds 1 to the counter
-            self.runBotConfig()
-            # runs the bot configuration window
-            return
-            # stops so it doesn't progress without double-checking
-
-        self.writeConfig()
-        # save + exit if it makes this far (no tasks)
 
 ### Config Write ###
 
@@ -531,6 +413,7 @@ class funcConfWindow(object):
             "addressType": self.addressTypeDropdown.currentText().strip(),
             "consoleLength": consoleLength,
             "hidePlayerTimeout": playerTimeout,
+            "renderOverlay": self.renderOverlayCheck.isChecked(),
             "enableBot": self.enableBotCheck.isChecked(),
             "skipFuncCfgWin": self.skipFuncCfgCheck.isChecked(),
             "skipSBOcfgWin": self.skipSBOcfgCheck.isChecked(),
@@ -544,7 +427,7 @@ class funcConfWindow(object):
             json.dump(configuration, cfg, indent=3)
             # dumps everything in
 
-        self.window.close()
+        self.close()
         # closes the whole process
 
 
@@ -557,13 +440,8 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     # creates a Qt Application
 
-    FuncCfgWindow = QMainWindow()
-    # creates a window
-    ui = funcConfWindow()
-    # takes the UI class
-    ui.setupUi(FuncCfgWindow)
-    # "populates" the UI class
-
+    FuncCfgWindow = funcConfWindow()
+    # instantiates a window
     FuncCfgWindow.show()
     # displays the window
 
