@@ -77,17 +77,30 @@ class ComConfWindow(QMainWindow):
         # runs the config reader to get new config info, stores it
         self.commandList = []
         # list of commands stored
+        self.staleList = []
+        # list of 'stale' commands (legacy, should be deleted)
 
         for command in self.loadedCommandConfig.keys():
-        # goes through every command
+        # goes through every command name
             if command not in self.defaultConfig.keys():
-            # if that command is not found in the default config's keys (ensures there's no stale old values)
-                self.loadedCommandConfig.pop(command)
-                # deletes the command
+            # if that command is not found in the default config's keys
+                self.staleList.append(command)
+                # adds the name of the command to the list of stale values
             else:
             # is both in the loaded and default config
                 self.commandList.append(command)
-                # adds the name of the command to the list
+                # adds the name of the command to the list of actual commands
+
+        for command in self.staleList:
+        # goes through the list of stale commands
+            try:
+            # tries (should succeed, but dict modify might go kaboom)
+                self.loadedCommandConfig.pop(command)
+                # removes the command from the dictionary altogether
+            except:
+            # if it fails
+                pass
+                # skips (can't safely delete)
 
         self.selectedCommand = self.commandList[0]
         # gets the first element of the command list
@@ -98,8 +111,6 @@ class ComConfWindow(QMainWindow):
 
         self.mainLayout = QGridLayout(self.mainWidget)
         # sets the main layout to use a grid of the central
-        self.mainLayout.setObjectName("mainLayout")
-        # sets name
         self.mainLayout.setContentsMargins(25, 25, 25, 25)
         # sets margins of 25px 
         self.mainLayout.setVerticalSpacing(25)
@@ -109,8 +120,6 @@ class ComConfWindow(QMainWindow):
 
         self.informLayout = QGridLayout()
         # adds a grid layout for the user inform prompt
-        self.informLayout.setObjectName("informLayout")
-        # sets name
         self.informLayout.setContentsMargins(25, 25, 25, 25)
         # sets margins of 25px
         self.informLayout.setVerticalSpacing(15)
@@ -125,8 +134,6 @@ class ComConfWindow(QMainWindow):
 
         self.commandLayout = QGridLayout()
         # a layout for the command dropdown/label to sit in
-        self.commandLayout.setObjectName("commandLayout")
-        # sets name
         self.commandLayout.setContentsMargins(25, 25, 25, 25)
         # sets margins of 25px
         self.commandLayout.setVerticalSpacing(15)
@@ -141,8 +148,6 @@ class ComConfWindow(QMainWindow):
 
         self.optionLayout = QGridLayout()
         # adds a grid layout for the options
-        self.optionLayout.setObjectName("optionLayout")
-        # sets name
         self.optionLayout.setContentsMargins(25, 25, 25, 25)
         # sets margins of 25px
         self.optionLayout.setVerticalSpacing(25)

@@ -105,8 +105,6 @@ class BotConfWindow(QMainWindow):
 
         self.mainLayout = QGridLayout(self.mainWidget)
         # sets the main layout to use a grid of the central
-        self.mainLayout.setObjectName("mainLayout")
-        # sets name
         self.mainLayout.setContentsMargins(25, 25, 25, 25)
         # sets margins of 25px 
         self.mainLayout.setVerticalSpacing(25)
@@ -116,8 +114,6 @@ class BotConfWindow(QMainWindow):
 
         self.informLayout = QGridLayout()
         # adds a grid layout for the user inform prompt
-        self.informLayout.setObjectName("informLayout")
-        # sets name
         self.informLayout.setContentsMargins(25, 25, 25, 25)
         # sets margins of 25px
         self.informLayout.setVerticalSpacing(15)
@@ -132,8 +128,6 @@ class BotConfWindow(QMainWindow):
 
         self.optionLayout = QGridLayout()
         # adds a grid layout for the options
-        self.optionLayout.setObjectName("optionLayout")
-        # sets name
         self.optionLayout.setContentsMargins(25, 25, 25, 25)
         # sets margins of 25px
         self.optionLayout.setVerticalSpacing(15)
